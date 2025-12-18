@@ -1,15 +1,58 @@
 import { useEffect, useMemo, useState } from "react";
 
+const DEFAULT_DIVISION = "Ponytail-4th";
+
+function apiBase() {
+  // In Azure, set this in SWA config:
+  // VITE_API_BASE_URL = https://<your-functionapp>.azurewebsites.net
+  const b = import.meta.env.VITE_API_BASE_URL;
+  return (b && b.trim()) ? b.trim().replace(/\/+$/, "") : "";
+}
+
+async function apiFetch(path, options = {}) {
+  const base = apiBase();
+  const url = base ? `${base}${path}` : path;
+
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      "Content-Type": options.body ? "application/json" : (options.headers?.["Content-Type"] || undefined),
+    },
+  });
+
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
+  if (!res.ok) {
+    const msg = typeof data === "string" && data ? data : (data?.error || res.statusText);
+    throw new Error(`${res.status} ${msg}`);
+  }
+  return data;
+}
+
+function formatDateISO(d) {
+  // d is "YYYY-MM-DD"
+  return d;
+}
+
 export default function App() {
   // Filters + list
-  const [dision, setDivision] = useState("Ponytail-4th");
-  const [sasFilter, setStatusFilter] = useState("Open");
+  const [division, setDivision] = useState(DEFAULT_DIVISION);
+  const [statusFilter, setStatusFilter] = useState("Open");
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Post form  const [offeringTeamId, setOfferingTeamId] = useState("3");  const [gameDate, setGameDate] = useState("2025-12-25");
-  const [startTime, setStartTime] = useState("20:01");
-  const [endTime, setEndTime] = useState("21:01");
+  // Create form
+  const [offeringTeamId, setOfferingTeamId] = useState("3");
+  const [gameDate, setGameDate] = useState("2025-12-25");
+  const [startTime, setStartTime] = useState("18:00");
+  const [endTime, setEndTime] = useState("19:30");
   const [field, setField] = useState("Gunston Park > Turf Field");
   const [gameType, setGameType] = useState("Swap");
   const [notes, setNotes] = useState("");
@@ -18,260 +61,231 @@ export default function App() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  function normalizeSlot(s) {
-    // API returns PascalCase; UI uses camelCase.
-    return {
-      slotId: s?.SlotId ?? s?.slotId ?? s?.RowKey ?? s?.rowKey,
-      division: s?.Division ?? s?.division ?? s?.PartitionKey ?? s?.partitionKey,
-      offeringTeamId: s?.OfferingTeamId ?? s?.offeringTeamId,
-      gameDate: s?.GameDate ?? s?.gameDate,
-      startTime: s?.StartTime ?? s?.startTime,
-      endTime: s?.EndTime ?? s?.endTime,
-      field: s?.Field ?? s?.field,
-      gameType: s?.GameType ?? s?.gameType,
-      status: s?.Status ?? s?.status,
-      notes: s?.Notes ?? s?.notes
-    };
-  }
+  const filteredSlots = useMemo(() => {
+    const s = Array.isArray(slots) ? slots : [];
+    if (!statusFilter || statusFilter === "All") return s;
+    return s.filter((x) => (x?.Status || "").toLowerCase() === statusFilter.toLowerCase());
+  }, [slots, statusFilter]);
 
-  async function loadSlots() {
-    setLoading(true);
+  async function refresh() {
     setError("");
     setSuccess("");
-
+    setLoading(true);
     try {
-      const url = `/api/slots?division=${encodeURIComponent(division)}`;
-      const res = await fetch(url);
-
-      if (res.status === 401) {
-        setError("Not signed in (401). Once Entra + Static Web App auth is wired, this will prompt login.");
-        setSlots([]);
-        return;
-      }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`API error ${res.status}. ${text}`);
-      }
-
-      const data = await res.json();
-      const normalized = (Array.isArray(data) ? data : []).map(normalizeSlot);
-      setSlots(normalized);
+      const data = await apiFetch(`/api/slots?division=${encodeURIComponent(division)}`, { method: "GET" });
+      setSlots(Array.isArray(data) ? data : []);
     } catch (e) {
-      setError(e?.message ?? "Unknown error");
-      setSlots([]);
+      setError(String(e.message || e));
     } finally {
       setLoading(false);
     }
   }
 
-  async function createSlot(e) {
-    e.preventDefault();
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [division]);
+
+  async function createSlot() {
     setError("");
     setSuccess("");
 
-    // tiny client-side validation
-    if (!division || !offeringTeamId || !gameDate || !startTime || !endTime || !field) {
-      setError("Missing required fields.");
-      return;
-    }
-    if (startTime >= endTime) {
-      setError("Start time must be before end time.");
-      return;
-    }
-
-    // Send what the API expects (camelCase is fine if your server deserializer is case-insensitive;
-    // but if you ever make it strict, switch these keys to PascalCase).
     const payload = {
       division,
-      offeringTeamId,
-      gameDate,
+      offeringTeamId: String(offeringTeamId || "").trim(),
+      gameDate: formatDateISO(gameDate),
       startTime,
       endTime,
       field,
       gameType,
-      notes
+      notes,
     };
 
+    if (!payload.offeringTeamId) {
+      setError("OfferingTeamId is required.");
+      return;
+    }
+
+    setLoading(true);
     try {
-      const res = await fetch("/api/slots", {
+      const data = await apiFetch(`/api/slots`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
-
-      if (res.status === 401) {
-        setError("Not signed in (401). Create will work once Entra auth is wired.");
-        return;
-      }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Create failed ${res.status}. ${text}`);
-      }
-
-      const data = await res.json().catch(() => ({}));
-      const slotId = data?.slotId || data?.SlotId;
-
+      // Your API returns SlotId in some responses; handle either shape.
+      const slotId = data?.SlotId || data?.slotId || "";
       setSuccess(slotId ? `Posted! SlotId: ${slotId}` : "Posted!");
-      await loadSlots();
+      await refresh();
     } catch (e) {
-      setError(e?.message ?? "Unknown error creating slot");
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
     }
   }
 
-  useEffect(() => {
-    loadSlots();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  async function cancelSlot(slot) {
+    setError("");
+    setSuccess("");
+    const slotId = slot?.SlotId;
+    const div = slot?.Division || division;
+    if (!slotId) {
+      setError("Missing SlotId");
+      return;
+    }
 
-  const visibleSlots = useMemo(() => {
-    if (!statusFilter) return slots;
-    return slots.filter((s) => (s.status ?? "").toLowerCase() === statusFilter.toLowerCase());
-  }, [slots, statusFilter]);
+    setLoading(true);
+    try {
+      await apiFetch(`/api/slots/${encodeURIComponent(div)}/${encodeURIComponent(slotId)}/cancel`, {
+        method: "PATCH",
+      });
+      setSuccess(`Cancelled: ${slotId}`);
+      await refresh();
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const sortedSlots = useMemo(() => {
-    const arr = [...visibleSlots];
-    arr.sort((a, b) => (`${a.gameDate ?? ""} ${a.startTime ?? ""}`).localeCompare(`${b.gameDate ?? ""} ${b.startTime ?? ""}`));
-    return arr;
-  }, [visibleSlots]);
+  // Basic inline styles (keeps this file dependency-free)
+  const page = { fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif", padding: 18, maxWidth: 1100, margin: "0 auto" };
+  const row = { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" };
+  const card = { border: "1px solid #e6e6e6", borderRadius: 10, padding: 14, background: "white" };
+  const label = { display: "block", fontSize: 12, color: "#555", marginBottom: 6 };
+  const input = { padding: 10, borderRadius: 8, border: "1px solid #ccc", minWidth: 180 };
+  const smallInput = { padding: 10, borderRadius: 8, border: "1px solid #ccc", minWidth: 120 };
+  const button = { padding: "10px 14px", borderRadius: 10, border: "1px solid #222", background: "#111", color: "white", cursor: "pointer" };
+  const buttonSecondary = { padding: "10px 14px", borderRadius: 10, border: "1px solid #999", background: "white", color: "#111", cursor: "pointer" };
+  const msgErr = { background: "#fff3f3", border: "1px solid #ffd2d2", color: "#8a0000", padding: 10, borderRadius: 10, marginTop: 10 };
+  const msgOk = { background: "#f3fff5", border: "1px solid #c9ffd3", color: "#0a6b1f", padding: 10, borderRadius: 10, marginTop: 10 };
+  const table = { width: "100%", borderCollapse: "collapse", marginTop: 12 };
+  const th = { textAlign: "left", padding: 10, borderBottom: "2px solid #eee", fontSize: 12, color: "#444" };
+  const td = { padding: 10, borderBottom: "1px solid #eee", verticalAlign: "top" };
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16, fontFamily: "system-ui, Arial" }}>
-      <h1 style={{ marginBottom: 8 }}>GameSwap</h1>
-      <p style={{ marginTop: 0, color: "#444" }}>View open swap slots and post new ones.</p>
+    <div style={page}>
+      <h1 style={{ margin: "0 0 6px 0" }}>GameSwap</h1>
+      <div style={{ color: "#555", marginBottom: 14 }}>
+        API Base: <code>{apiBase() || "(relative /api — local dev proxy or SWA integrated API)"}</code>
+      </div>
 
-      {/* Create form */}
-      <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 14, marginBottom: 16 }}>
-        <h2 style={{ marginTop: 0, marginBottom: 10, fontSize: 16 }}>Post a Slot</h2>
+      <div style={{ ...card, marginBottom: 14 }}>
+        <div style={row}>
+          <div>
+            <label style={label}>Division</label>
+            <input style={input} value={division} onChange={(e) => setDivision(e.target.value)} />
+          </div>
 
-        <form onSubmit={createSlot} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
-          <Field label="Division">
-            <input value={division} onChange={(e) => setDivision(e.target.value)} style={input} />
-          </Field>
+          <div>
+            <label style={label}>Status filter</label>
+            <select style={input} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="Open">Open</option>
+              <option value="Pending">Pending</option>
+              <option value="Confirmed">Confirmed</option>
+              <option value="Cancelled">Cancelled</option>
+              <option value="All">All</option>
+            </select>
+          </div>
 
-          <Field label="Offering Team Id">
-            <input value={offeringTeamId} onChange={(e) => setOfferingTeamId(e.target.value)} style={input} />
-          </Field>
+          <button style={buttonSecondary} onClick={refresh} disabled={loading}>
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
 
-          <Field label="Game Date (YYYY-MM-DD)">
-            <input value={gameDate} onChange={(e) => setGameDate(e.target.value)} style={input} />
-          </Field>
+        {error ? <div style={msgErr}>{error}</div> : null}
+        {success ? <div style={msgOk}>{success}</div> : null}
+      </div>
 
-          <Field label="Start (HH:mm)">
-            <input value={startTime} onChange={(e) => setStartTime(e.target.value)} style={input} />
-          </Field>
+      <div style={{ ...card, marginBottom: 14 }}>
+        <h2 style={{ marginTop: 0 }}>Post a slot</h2>
+        <div style={row}>
+          <div>
+            <label style={label}>OfferingTeamId</label>
+            <input style={smallInput} value={offeringTeamId} onChange={(e) => setOfferingTeamId(e.target.value)} />
+          </div>
 
-          <Field label="End (HH:mm)">
-            <input value={endTime} onChange={(e) => setEndTime(e.target.value)} style={input} />
-          </Field>
+          <div>
+            <label style={label}>GameDate (YYYY-MM-DD)</label>
+            <input style={smallInput} value={gameDate} onChange={(e) => setGameDate(e.target.value)} />
+          </div>
 
-          <Field label="Game Type">
-            <select value={gameType} onChange={(e) => setGameType(e.target.value)} style={input}>
+          <div>
+            <label style={label}>Start</label>
+            <input style={smallInput} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+          </div>
+
+          <div>
+            <label style={label}>End</label>
+            <input style={smallInput} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          </div>
+
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <label style={label}>Field</label>
+            <input style={{ ...input, width: "100%" }} value={field} onChange={(e) => setField(e.target.value)} />
+          </div>
+
+          <div>
+            <label style={label}>GameType</label>
+            <select style={input} value={gameType} onChange={(e) => setGameType(e.target.value)}>
               <option value="Swap">Swap</option>
               <option value="Scrimmage">Scrimmage</option>
-              <option value="Exhibition">Exhibition</option>
+              <option value="Practice">Practice</option>
             </select>
-          </Field>
-
-          <div style={{ gridColumn: "1 / span 4" }}>
-            <label style={label}>Field</label>
-            <input value={field} onChange={(e) => setField(e.target.value)} style={input} />
           </div>
 
-          <div style={{ gridColumn: "5 / span 2" }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
             <label style={label}>Notes</label>
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} style={input} />
+            <input style={{ ...input, width: "100%" }} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
 
-          <div style={{ gridColumn: "1 / span 6", display: "flex", gap: 10, alignItems: "center" }}>
-            <button type="submit" style={{ padding: "9px 14px", cursor: "pointer" }}>
-              Post Slot
-            </button>
-            <button type="button" onClick={loadSlots} style={{ padding: "9px 14px", cursor: "pointer" }}>
-              {loading ? "Loading..." : "Refresh List"}
-            </button>
-          </div>
-        </form>
-
-        {error && (
-          <div style={{ marginTop: 12, background: "#fff3cd", border: "1px solid #ffeeba", padding: 12, borderRadius: 6 }}>
-            <strong>Heads up:</strong> {error}
-          </div>
-        )}
-
-        {success && (
-          <div style={{ marginTop: 12, background: "#d1e7dd", border: "1px solid #badbcc", padding: 12, borderRadius: 6 }}>
-            {success}
-          </div>
-        )}
+          <button style={button} onClick={createSlot} disabled={loading}>
+            {loading ? "Working..." : "Post"}
+          </button>
+        </div>
       </div>
 
-      {/* Filters */}
-      <div style={{ display: "flex", gap: 12, alignItems: "end", marginBottom: 12, flexWrap: "wrap" }}>
-        <div>
-          <label style={label}>Division</label>
-          <input
-            value={division}
-            onChange={(e) => setDivision(e.target.value)}
-            style={{ ...input, width: 220 }}
-            placeholder="e.g., Ponytail-4th"
-          />
-        </div>
+      <div style={card}>
+        <h2 style={{ marginTop: 0 }}>Slots</h2>
 
-        <div>
-          <label style={label}>Status</label>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={input}>
-            <option value="Open">Open</option>
-            <option value="Pending">Pending</option>
-            <option value="Confirmed">Confirmed</option>
-            <option value="Cancelled">Cancelled</option>
-            <option value="">All</option>
-          </select>
-        </div>
-
-        <button onClick={loadSlots} style={{ padding: "9px 14px", cursor: "pointer" }}>
-          {loading ? "Loading..." : "Refresh"}
-        </button>
-      </div>
-
-      {/* Table */}
-      <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
+        <table style={table}>
+          <thead>
             <tr>
+              <th style={th}>SlotId</th>
+              <th style={th}>Team</th>
               <th style={th}>Date</th>
               <th style={th}>Time</th>
               <th style={th}>Field</th>
               <th style={th}>Type</th>
               <th style={th}>Status</th>
-              <th style={th}>SlotId</th>
+              <th style={th}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {sortedSlots.length === 0 ? (
+            {filteredSlots.length === 0 ? (
               <tr>
-                <td colSpan={6} style={{ padding: 14, color: "#666" }}>
+                <td style={td} colSpan={8}>
                   {loading ? "Loading..." : "No slots found."}
                 </td>
               </tr>
             ) : (
-              sortedSlots.map((s) => (
-                <tr key={s.slotId ?? Math.random()}>
-                  <td style={td}>{s.gameDate ?? ""}</td>
-                  <td style={td}>{`${s.startTime ?? ""}–${s.endTime ?? ""}`}</td>
-                  <td style={td}>{s.field ?? ""}</td>
-                  <td style={td}>{s.gameType ?? ""}</td>
-                  <td style={td}>{s.status ?? ""}</td>
-                  <td style={{ ...td, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas" }}>
+              filteredSlots.map((s) => (
+                <tr key={s.SlotId}>
+                  <td style={td}><code>{s.SlotId}</code></td>
+                  <td style={td}>{s.OfferingTeamId}</td>
+                  <td style={td}>{s.GameDate}</td>
+                  <td style={td}>{s.StartTime}–{s.EndTime}</td>
+                  <td style={td}>{s.Field}</td>
+                  <td style={td}>{s.GameType}</td>
+                  <td style={td}>{s.Status}</td>
+                  <td style={td}>
                     <button
-                      onClick={() => navigator.clipboard.writeText(s.slotId ?? "")}
-                      style={{ marginRight: 8, cursor: "pointer" }}
-                      title="Copy SlotId"
+                      style={buttonSecondary}
+                      onClick={() => cancelSlot(s)}
+                      disabled={loading || String(s.Status || "").toLowerCase() === "cancelled"}
+                      title="Cancel slot"
                     >
-                      Copy
+                      Cancel
                     </button>
-                    {s.slotId ?? ""}
                   </td>
                 </tr>
               ))
@@ -279,370 +293,6 @@ export default function App() {
           </tbody>
         </table>
       </div>
-
-      <p style={{ marginTop: 12, color: "#666", fontSize: 12 }}>
-        Dev: React calls <code>/api/...</code> and Vite proxies to your Functions host.
-      </p>
     </div>
   );
 }
-
-function Field({ label: lbl, children }) {
-  return (
-    <div>
-      <label style={label}>{lbl}</label>
-      {children}
-    </div>
-  );
-}
-
-const label = { display: "block", fontSize: 12, color: "#555", marginBottom: 4 };
-const input = { padding: 8, width: "100%" };
-const th = { textAlign: "left", padding: 10, borderBottom: "1px solid #ddd", fontSize: 12, color: "#555" };
-const td = { padding: 10, borderBottom: "1px solid #eee", verticalAlign: "top" import { useEffect, useMemo, useState } from "react";
-
-export default function App() {
-  // Filters + list
-  const [division, setDivision] = useState("Ponytail-4th");
-  const [statusFilter, setStatusFilter] = useState("Open");
-  const [slots, setSlots] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  // Post form
-  const [offeringTeamId, setOfferingTeamId] = useState("3");
-  const [gameDate, setGameDate] = useState("2025-12-25");
-  const [startTime, setStartTime] = useState("20:01");
-  const [endTime, setEndTime] = useState("21:01");
-  const [field, setField] = useState("Gunston Park > Turf Field");
-  const [gameType, setGameType] = useState("Swap");
-  const [notes, setNotes] = useState("");
-
-  // UI messages
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  function normalizeSlot(s) {
-    return {
-      slotId: s?.SlotId ?? s?.slotId ?? s?.RowKey ?? s?.rowKey,
-      division: s?.Division ?? s?.division ?? s?.PartitionKey ?? s?.partitionKey,
-      offeringTeamId: s?.OfferingTeamId ?? s?.offeringTeamId,
-      gameDate: s?.GameDate ?? s?.gameDate,
-      startTime: s?.StartTime ?? s?.startTime,
-      endTime: s?.EndTime ?? s?.endTime,
-      field: s?.Field ?? s?.field,
-      gameType: s?.GameType ?? s?.gameType,
-      status: s?.Status ?? s?.status,
-      notes: s?.Notes ?? s?.notes
-    };
-  }
-
-  async function loadSlots() {
-    setLoading(true);
-    setError("");
-    setSuccess("");
-
-    try {
-      const url = `/api/slots?division=${encodeURIComponent(division)}`;
-      const res = await fetch(url);
-
-      if (res.status === 401) {
-        setError("Not signed in (401). Once Entra + Static Web App auth is wired, this will prompt login.");
-        setSlots([]);
-        return;
-      }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`API error ${res.status}. ${text}`);
-      }
-
-      const data = await res.json();
-      setSlots((Array.isArray(data) ? data : []).map(normalizeSlot));
-    } catch (e) {
-      setError(e?.message ?? "Unknown error");
-      setSlots([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function createSlot(e) {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
-
-    if (!division || !offeringTeamId || !gameDate || !startTime || !endTime || !field) {
-      setError("Missing required fields.");
-      return;
-    }
-    if (startTime >= endTime) {
-      setError("Start time must be before end time.");
-      return;
-    }
-
-    const payload = {
-      division,
-      offeringTeamId,
-      gameDate,
-      startTime,
-      endTime,
-      field,
-      gameType,
-      notes
-    };
-
-    try {
-      const res = await fetch("/api/slots", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.status === 401) {
-        setError("Not signed in (401). Create will work once Entra auth is wired.");
-        return;
-      }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Create failed ${res.status}. ${text}`);
-      }
-
-      const data = await res.json().catch(() => ({}));
-      const slotId = data?.slotId || data?.SlotId;
-      setSuccess(slotId ? `Posted! SlotId: ${slotId}` : "Posted!");
-      await loadSlots();
-    } catch (e) {
-      setError(e?.message ?? "Unknown error creating slot");
-    }
-  }
-
-  async function cancelSlot(slotId) {
-    setError("");
-    setSuccess("");
-
-    if (!slotId) {
-      setError("Missing slotId.");
-      return;
-    }
-
-    const ok = window.confirm(`Cancel slot ${slotId}?`);
-    if (!ok) return;
-
-    try {
-      const url = `/api/slots/${encodeURIComponent(division)}/${encodeURIComponent(slotId)}/cancel`;
-      const res = await fetch(url, { method: "PATCH" });
-
-      if (res.status === 401) {
-        setError("Not signed in (401). Cancel will work once Entra auth is wired.");
-        return;
-      }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Cancel failed ${res.status}. ${text}`);
-      }
-
-      setSuccess(`Cancelled slot ${slotId}`);
-      await loadSlots();
-    } catch (e) {
-      setError(e?.message ?? "Unknown error cancelling slot");
-    }
-  }
-
-  useEffect(() => {
-    loadSlots();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const visibleSlots = useMemo(() => {
-    if (!statusFilter) return slots;
-    return slots.filter((s) => (s.status ?? "").toLowerCase() === statusFilter.toLowerCase());
-  }, [slots, statusFilter]);
-
-  const sortedSlots = useMemo(() => {
-    const arr = [...visibleSlots];
-    arr.sort((a, b) =>
-      (`${a.gameDate ?? ""} ${a.startTime ?? ""}`).localeCompare(`${b.gameDate ?? ""} ${b.startTime ?? ""}`)
-    );
-    return arr;
-  }, [visibleSlots]);
-
-  return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16, fontFamily: "system-ui, Arial" }}>
-      <h1 style={{ marginBottom: 8 }}>GameSwap</h1>
-      <p style={{ marginTop: 0, color: "#444" }}>View open swap slots and post new ones.</p>
-
-      {/* Create form */}
-      <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 14, marginBottom: 16 }}>
-        <h2 style={{ marginTop: 0, marginBottom: 10, fontSize: 16 }}>Post a Slot</h2>
-
-        <form onSubmit={createSlot} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
-          <Field label="Division">
-            <input value={division} onChange={(e) => setDivision(e.target.value)} style={input} />
-          </Field>
-
-          <Field label="Offering Team Id">
-            <input value={offeringTeamId} onChange={(e) => setOfferingTeamId(e.target.value)} style={input} />
-          </Field>
-
-          <Field label="Game Date (YYYY-MM-DD)">
-            <input value={gameDate} onChange={(e) => setGameDate(e.target.value)} style={input} />
-          </Field>
-
-          <Field label="Start (HH:mm)">
-            <input value={startTime} onChange={(e) => setStartTime(e.target.value)} style={input} />
-          </Field>
-
-          <Field label="End (HH:mm)">
-            <input value={endTime} onChange={(e) => setEndTime(e.target.value)} style={input} />
-          </Field>
-
-          <Field label="Game Type">
-            <select value={gameType} onChange={(e) => setGameType(e.target.value)} style={input}>
-              <option value="Swap">Swap</option>
-              <option value="Scrimmage">Scrimmage</option>
-              <option value="Exhibition">Exhibition</option>
-            </select>
-          </Field>
-
-          <div style={{ gridColumn: "1 / span 4" }}>
-            <label style={label}>Field</label>
-            <input value={field} onChange={(e) => setField(e.target.value)} style={input} />
-          </div>
-
-          <div style={{ gridColumn: "5 / span 2" }}>
-            <label style={label}>Notes</label>
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} style={input} />
-          </div>
-
-          <div style={{ gridColumn: "1 / span 6", display: "flex", gap: 10, alignItems: "center" }}>
-            <button type="submit" style={{ padding: "9px 14px", cursor: "pointer" }}>
-              Post Slot
-            </button>
-            <button type="button" onClick={loadSlots} style={{ padding: "9px 14px", cursor: "pointer" }}>
-              {loading ? "Loading..." : "Refresh List"}
-            </button>
-          </div>
-        </form>
-
-        {error && (
-          <div style={{ marginTop: 12, background: "#fff3cd", border: "1px solid #ffeeba", padding: 12, borderRadius: 6 }}>
-            <strong>Heads up:</strong> {error}
-          </div>
-        )}
-
-        {success && (
-          <div style={{ marginTop: 12, background: "#d1e7dd", border: "1px solid #badbcc", padding: 12, borderRadius: 6 }}>
-            {success}
-          </div>
-        )}
-      </div>
-
-      {/* Filters */}
-      <div style={{ display: "flex", gap: 12, alignItems: "end", marginBottom: 12, flexWrap: "wrap" }}>
-        <div>
-          <label style={label}>Division</label>
-          <input
-            value={division}
-            onChange={(e) => setDivision(e.target.value)}
-            style={{ ...input, width: 220 }}
-            placeholder="e.g., Ponytail-4th"
-          />
-        </div>
-
-        <div>
-          <label style={label}>Status</label>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={input}>
-            <option value="Open">Open</option>
-            <option value="Pending">Pending</option>
-            <option value="Confirmed">Confirmed</option>
-            <option value="Cancelled">Cancelled</option>
-            <option value="">All</option>
-          </select>
-        </div>
-
-        <button onClick={loadSlots} style={{ padding: "9px 14px", cursor: "pointer" }}>
-          {loading ? "Loading..." : "Refresh"}
-        </button>
-      </div>
-
-      {/* Table */}
-      <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
-            <tr>
-              <th style={th}>Date</th>
-              <th style={th}>Time</th>
-              <th style={th}>Field</th>
-              <th style={th}>Type</th>
-              <th style={th}>Status</th>
-              <th style={th}>SlotId</th>
-              <th style={th}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedSlots.length === 0 ? (
-              <tr>
-                <td colSpan={7} style={{ padding: 14, color: "#666" }}>
-                  {loading ? "Loading..." : "No slots found."}
-                </td>
-              </tr>
-            ) : (
-              sortedSlots.map((s) => {
-                const canCancel = ["open", "pending"].includes((s.status ?? "").toLowerCase());
-                return (
-                  <tr key={s.slotId ?? Math.random()}>
-                    <td style={td}>{s.gameDate ?? ""}</td>
-                    <td style={td}>{`${s.startTime ?? ""}–${s.endTime ?? ""}`}</td>
-                    <td style={td}>{s.field ?? ""}</td>
-                    <td style={td}>{s.gameType ?? ""}</td>
-                    <td style={td}>{s.status ?? ""}</td>
-                    <td style={{ ...td, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas" }}>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(s.slotId ?? "")}
-                        style={{ marginRight: 8, cursor: "pointer" }}
-                        title="Copy SlotId"
-                      >
-                        Copy
-                      </button>
-                      {s.slotId ?? ""}
-                    </td>
-                    <td style={td}>
-                      <button
-                        onClick={() => cancelSlot(s.slotId)}
-                        disabled={!canCancel}
-                        style={{ padding: "6px 10px", cursor: canCancel ? "pointer" : "not-allowed" }}
-                        title={canCancel ? "Cancel this slot" : "Only Open/Pending slots can be cancelled"}
-                      >
-                        Cancel
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <p style={{ marginTop: 12, color: "#666", fontSize: 12 }}>
-        Dev: React calls <code>/api/...</code> and Vite proxies to your Functions host.
-      </p>
-    </div>
-  );
-}
-
-function Field({ label: lbl, children }) {
-  return (
-    <div>
-      <label style={label}>{lbl}</label>
-      {children}
-    </div>
-  );
-}
-
-const label = { display: "block", fontSize: 12, color: "#555", marginBottom: 4 };
-const input = { padding: 8, width: "100%" };
-const th = { textAlign: "left", padding: 10, borderBottom: "1px solid #ddd", fontSize: 12, color: "#555" };
-const td = { padding: 10, borderBottom: "1px solid #eee", verticalAlign: "top" };
