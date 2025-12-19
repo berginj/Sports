@@ -18,6 +18,5 @@ jobs:
           action: upload
           app_location: /
           output_location: dist
-    # API (managed functions in repo)
   	  api_location: api
   	  skip_api_build: false
