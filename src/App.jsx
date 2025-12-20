@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import OffersPage from "./pages/OffersPage";
 import ManagePage from "./pages/ManagePage";
-import TopNav from "./TopNav";
+import TopNav from "./components/TopNav";
 import { useSession, getInitialLeagueId } from "./lib/useSession";
 
 export default function App() {

@@ -269,4 +269,8 @@ Prefer shared helpers (ApiGuards/IdentityUtil)
 
 Provide full-file replacements when requested
 
+<<<<<<< HEAD
 Avoid creating new table names or new PK patterns unless explicitly directed
+=======
+Avoid creating new table names or new PK patterns unless explicitly directed
+>>>>>>> 0ac44d73bcb2b32bcc3d067b75d1ed55b4779353
