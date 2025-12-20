@@ -1,71 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
+import { apiFetch, apiBase } from "../lib/api";
 
 const DEFAULT_DIVISION = "Ponytail-4th";
 
 /**
- * PROD (Azure Static Web Apps): always use relative /api so SWA proxies to linked Function App.
- * DEV (npm run dev): allow overriding to call a direct Function App host.
- */
-function apiBase() {
-  if (import.meta.env.DEV) {
-    const b = import.meta.env.VITE_API_BASE_URL;
-    return b && b.trim() ? b.trim().replace(/\/+$/, "") : "";
-  }
-  return "";
-}
-
-async function apiFetch(path, options = {}) {
-  const base = apiBase();
-  const url = base ? `${base}${path}` : path;
-
-  const headers = new Headers(options.headers || {});
-  if (options.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  const res = await fetch(url, { ...options, headers });
-
-  const text = await res.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text;
-  }
-
-  if (!res.ok) {
-    const msg =
-      typeof data === "string" && data
-        ? data
-        : data?.error || data?.message || res.statusText;
-    throw new Error(`${res.status} ${msg}`);
-  }
-
-  return data;
-}
-
-function formatDateISO(d) {
-  return d; // expects YYYY-MM-DD
-}
-
-/**
  * Configure your backend routes here (one place).
- * If your Function App uses a different accept route, change only ACCEPT_ROUTE.
  */
-const ACCEPT_ROUTE = (div, slotId) =>
-  `/api/slots/${encodeURIComponent(div)}/${encodeURIComponent(slotId)}/accept`;
-
 const CANCEL_ROUTE = (div, slotId) =>
   `/api/slots/${encodeURIComponent(div)}/${encodeURIComponent(slotId)}/cancel`;
 
-export default function OffersPage() {
+const REQUEST_ROUTE = (div, slotId) =>
+  `/api/slots/${encodeURIComponent(div)}/${encodeURIComponent(slotId)}/requests`;
+
+export default function OffersPage({ leagueId, me }) {
   // Filters + list
   const [division, setDivision] = useState(DEFAULT_DIVISION);
   const [statusFilter, setStatusFilter] = useState("Open");
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // "Who am I?" (needed for Accept)
+  // Fields (real, league-scoped)
+  const [fieldsLoading, setFieldsLoading] = useState(false);
+  const [fieldsList, setFieldsList] = useState([]);
+
+  // "Who am I?" (needed for Request)
   const [myTeamId, setMyTeamId] = useState("3");
 
   // Create form
@@ -73,7 +31,12 @@ export default function OffersPage() {
   const [gameDate, setGameDate] = useState("2025-12-25");
   const [startTime, setStartTime] = useState("18:00");
   const [endTime, setEndTime] = useState("19:30");
+
+  // Field selection
+  const [fieldMode, setFieldMode] = useState("select"); // "select" | "custom"
   const [field, setField] = useState("Gunston Park > Turf Field");
+  const [customField, setCustomField] = useState("");
+
   const [gameType, setGameType] = useState("Swap");
   const [notes, setNotes] = useState("");
 
@@ -88,6 +51,10 @@ export default function OffersPage() {
       (x) => String(x?.Status || "").toLowerCase() === statusFilter.toLowerCase()
     );
   }, [slots, statusFilter]);
+
+  function formatDateISO(d) {
+    return d; // expects YYYY-MM-DD
+  }
 
   async function refresh() {
     setError("");
@@ -106,14 +73,54 @@ export default function OffersPage() {
     }
   }
 
+  async function loadFields() {
+    if (!leagueId) return;
+    setFieldsLoading(true);
+    try {
+      const data = await apiFetch(
+        `/api/leagues/${encodeURIComponent(leagueId)}/fields?activeOnly=true`,
+        { method: "GET" }
+      );
+      const list = Array.isArray(data) ? data : [];
+      setFieldsList(list);
+
+      // If we're in select mode, ensure selection stays valid
+      if (list.length > 0 && fieldMode === "select") {
+        const names = new Set(list.map((f) => String(f?.Name || "")));
+        if (!names.has(field)) {
+          const first = String(list[0]?.Name || "");
+          if (first) setField(first);
+        }
+      }
+    } catch (e) {
+      // Don’t block the page; fallback to custom text
+      console.warn("ListFields failed:", e);
+      setFieldsList([]);
+    } finally {
+      setFieldsLoading(false);
+    }
+  }
+
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [division]);
 
+  useEffect(() => {
+    loadFields();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueId]);
+
+  function effectiveField() {
+    if (fieldMode === "custom") return String(customField || "").trim();
+    return String(field || "").trim();
+  }
+
   async function createSlot() {
     setError("");
     setSuccess("");
+
+    const effField = effectiveField();
 
     const payload = {
       division,
@@ -121,13 +128,17 @@ export default function OffersPage() {
       gameDate: formatDateISO(gameDate),
       startTime,
       endTime,
-      field,
+      field: effField,
       gameType,
       notes,
     };
 
     if (!payload.offeringTeamId) {
       setError("OfferingTeamId is required.");
+      return;
+    }
+    if (!payload.field) {
+      setError("Field is required.");
       return;
     }
 
@@ -171,7 +182,7 @@ export default function OffersPage() {
     }
   }
 
-  async function acceptSlot(slot) {
+  async function requestSlot(slot) {
     setError("");
     setSuccess("");
 
@@ -183,20 +194,22 @@ export default function OffersPage() {
       return;
     }
     if (!String(myTeamId || "").trim()) {
-      setError("MyTeamId is required to accept a slot.");
+      setError("MyTeamId is required to request a slot.");
       return;
     }
 
     setLoading(true);
     try {
-      // If your backend expects acceptingTeamId in the body, keep this.
-      // If it expects it elsewhere (query/header), change here.
-      await apiFetch(ACCEPT_ROUTE(div, slotId), {
-        method: "PATCH",
-        body: JSON.stringify({ acceptingTeamId: String(myTeamId).trim() }),
+      await apiFetch(REQUEST_ROUTE(div, slotId), {
+        method: "POST",
+        body: JSON.stringify({
+          requestingTeamId: String(myTeamId).trim(),
+          requestingEmail: me?.Email || "",
+          message: "",
+        }),
       });
 
-      setSuccess(`Accepted: ${slotId}`);
+      setSuccess(`Requested: ${slotId}`);
       await refresh();
     } catch (e) {
       setError(String(e?.message || e));
@@ -225,24 +238,90 @@ export default function OffersPage() {
     padding: 14,
     background: "white",
   };
-  const label = { display: "block", fontSize: 12, color: "#555", marginBottom: 6 };
-  const input = { padding: 10, borderRadius: 8, border: "1px solid #ccc", minWidth: 180 };
-  const smallInput = { padding: 10, borderRadius: 8, border: "1px solid #ccc", minWidth: 120 };
-  const button = { padding: "10px 14px", borderRadius: 10, border: "1px solid #222", background: "#111", color: "white", cursor: "pointer" };
-  const buttonSecondary = { padding: "10px 14px", borderRadius: 10, border: "1px solid #999", background: "white", color: "#111", cursor: "pointer" };
-  const msgErr = { background: "#fff3f3", border: "1px solid #ffd2d2", color: "#8a0000", padding: 10, borderRadius: 10, marginTop: 10 };
-  const msgOk = { background: "#f3fff5", border: "1px solid #c9ffd3", color: "#0a6b1f", padding: 10, borderRadius: 10, marginTop: 10 };
+  const label = {
+    display: "block",
+    fontSize: 12,
+    color: "#555",
+    marginBottom: 6,
+  };
+  const input = {
+    padding: 10,
+    borderRadius: 8,
+    border: "1px solid #ccc",
+    minWidth: 180,
+  };
+  const smallInput = {
+    padding: 10,
+    borderRadius: 8,
+    border: "1px solid #ccc",
+    minWidth: 120,
+  };
+  const button = {
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid #222",
+    background: "#111",
+    color: "white",
+    cursor: "pointer",
+  };
+  const buttonSecondary = {
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid #999",
+    background: "white",
+    color: "#111",
+    cursor: "pointer",
+  };
+  const msgErr = {
+    background: "#fff3f3",
+    border: "1px solid #ffd2d2",
+    color: "#8a0000",
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 10,
+  };
+  const msgOk = {
+    background: "#f3fff5",
+    border: "1px solid #c9ffd3",
+    color: "#0a6b1f",
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 10,
+  };
   const table = { width: "100%", borderCollapse: "collapse", marginTop: 12 };
-  const th = { textAlign: "left", padding: 10, borderBottom: "2px solid #eee", fontSize: 12, color: "#444" };
-  const td = { padding: 10, borderBottom: "1px solid #eee", verticalAlign: "top" };
-  const pill = (bg, fg) => ({ display: "inline-block", padding: "2px 8px", borderRadius: 999, background: bg, color: fg, fontSize: 12 });
+  const th = {
+    textAlign: "left",
+    padding: 10,
+    borderBottom: "2px solid #eee",
+    fontSize: 12,
+    color: "#444",
+  };
+  const td = {
+    padding: 10,
+    borderBottom: "1px solid #eee",
+    verticalAlign: "top",
+  };
+  const pill = (bg, fg) => ({
+    display: "inline-block",
+    padding: "2px 8px",
+    borderRadius: 999,
+    background: bg,
+    color: fg,
+    fontSize: 12,
+  });
 
   function statusPill(statusRaw) {
     const s = String(statusRaw || "").toLowerCase();
     if (s === "open") return <span style={pill("#eef6ff", "#084298")}>Open</span>;
-    if (s === "pending") return <span style={pill("#fff3cd", "#664d03")}>Pending</span>;
-    if (s === "confirmed") return <span style={pill("#d1e7dd", "#0f5132")}>Confirmed</span>;
-    if (s === "cancelled") return <span style={pill("#f8d7da", "#842029")}>Cancelled</span>;
+    if (s === "pending") return (
+      <span style={pill("#fff3cd", "#664d03")}>Pending</span>
+    );
+    if (s === "confirmed") return (
+      <span style={pill("#d1e7dd", "#0f5132")}>Confirmed</span>
+    );
+    if (s === "cancelled") return (
+      <span style={pill("#f8d7da", "#842029")}>Cancelled</span>
+    );
     return <span>{String(statusRaw || "")}</span>;
   }
 
@@ -250,20 +329,45 @@ export default function OffersPage() {
     <div style={page}>
       <h1 style={{ margin: "0 0 6px 0" }}>GameSwap</h1>
       <div style={{ color: "#555", marginBottom: 14 }}>
-        API Base:{" "}
-        <code>{apiBase() || "(relative /api — SWA integrated API)"}</code>
+        API Base: <code>{apiBase() || "(relative /api — SWA integrated API)"}</code>
       </div>
+
+      {leagueId ? (
+        <div style={{ color: "#555", marginBottom: 14 }}>
+          Active League: <code>{leagueId}</code>{" "}
+          <button
+            style={{ ...buttonSecondary, marginLeft: 10, padding: "6px 10px" }}
+            onClick={loadFields}
+            disabled={fieldsLoading}
+            title="Reload fields list"
+          >
+            {fieldsLoading ? "Loading fields..." : "Reload fields"}
+          </button>
+        </div>
+      ) : (
+        <div style={{ color: "#8a0000", marginBottom: 14 }}>
+          No leagueId provided to OffersPage. Fields dropdown will be disabled.
+        </div>
+      )}
 
       <div style={{ ...card, marginBottom: 14 }}>
         <div style={row}>
           <div>
             <label style={label}>Division</label>
-            <input style={input} value={division} onChange={(e) => setDivision(e.target.value)} />
+            <input
+              style={input}
+              value={division}
+              onChange={(e) => setDivision(e.target.value)}
+            />
           </div>
 
           <div>
             <label style={label}>Status filter</label>
-            <select style={input} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select
+              style={input}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
               <option value="Open">Open</option>
               <option value="Pending">Pending</option>
               <option value="Confirmed">Confirmed</option>
@@ -273,8 +377,12 @@ export default function OffersPage() {
           </div>
 
           <div>
-            <label style={label}>MyTeamId (for Accept)</label>
-            <input style={smallInput} value={myTeamId} onChange={(e) => setMyTeamId(e.target.value)} />
+            <label style={label}>MyTeamId (for Request)</label>
+            <input
+              style={smallInput}
+              value={myTeamId}
+              onChange={(e) => setMyTeamId(e.target.value)}
+            />
           </div>
 
           <button style={buttonSecondary} onClick={refresh} disabled={loading}>
@@ -291,32 +399,144 @@ export default function OffersPage() {
         <div style={row}>
           <div>
             <label style={label}>OfferingTeamId</label>
-            <input style={smallInput} value={offeringTeamId} onChange={(e) => setOfferingTeamId(e.target.value)} />
+            <input
+              style={smallInput}
+              value={offeringTeamId}
+              onChange={(e) => setOfferingTeamId(e.target.value)}
+            />
           </div>
 
           <div>
             <label style={label}>GameDate (YYYY-MM-DD)</label>
-            <input style={smallInput} value={gameDate} onChange={(e) => setGameDate(e.target.value)} />
+            <input
+              style={smallInput}
+              value={gameDate}
+              onChange={(e) => setGameDate(e.target.value)}
+            />
           </div>
 
           <div>
             <label style={label}>Start</label>
-            <input style={smallInput} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            <input
+              style={smallInput}
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+            />
           </div>
 
           <div>
             <label style={label}>End</label>
-            <input style={smallInput} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            <input
+              style={smallInput}
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+            />
           </div>
 
           <div style={{ flex: 1, minWidth: 240 }}>
             <label style={label}>Field</label>
-            <input style={{ ...input, width: "100%" }} value={field} onChange={(e) => setField(e.target.value)} />
+
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <label
+                style={{
+                  display: "inline-flex",
+                  gap: 6,
+                  alignItems: "center",
+                  fontSize: 12,
+                  color: "#555",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="fieldMode"
+                  checked={fieldMode === "select"}
+                  onChange={() => setFieldMode("select")}
+                  disabled={!leagueId}
+                />
+                Pick
+              </label>
+
+              <label
+                style={{
+                  display: "inline-flex",
+                  gap: 6,
+                  alignItems: "center",
+                  fontSize: 12,
+                  color: "#555",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="fieldMode"
+                  checked={fieldMode === "custom"}
+                  onChange={() => setFieldMode("custom")}
+                />
+                Custom
+              </label>
+            </div>
+
+            {fieldMode === "select" ? (
+              <select
+                style={{
+                  ...input,
+                  width: "100%",
+                  minWidth: 240,
+                  marginTop: 8,
+                }}
+                value={field}
+                onChange={(e) => setField(e.target.value)}
+                disabled={!leagueId || fieldsLoading || fieldsList.length === 0}
+              >
+                {fieldsList.length === 0 ? (
+                  <option value="">
+                    {leagueId
+                      ? fieldsLoading
+                        ? "Loading fields..."
+                        : "No fields available"
+                      : "No league selected"}
+                  </option>
+                ) : (
+                  fieldsList.map((f) => (
+                    <option key={f.FieldId} value={f.Name}>
+                      {f.Name}
+                    </option>
+                  ))
+                )}
+              </select>
+            ) : (
+              <input
+                style={{
+                  ...input,
+                  width: "100%",
+                  minWidth: 240,
+                  marginTop: 8,
+                }}
+                value={customField}
+                onChange={(e) => setCustomField(e.target.value)}
+                placeholder="Type field name"
+              />
+            )}
+
+            <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
+              Field posts as a string (Field.Name). Next step: store FieldId on
+              slots.
+            </div>
           </div>
 
           <div>
             <label style={label}>GameType</label>
-            <select style={input} value={gameType} onChange={(e) => setGameType(e.target.value)}>
+            <select
+              style={input}
+              value={gameType}
+              onChange={(e) => setGameType(e.target.value)}
+            >
               <option value="Swap">Swap</option>
               <option value="Scrimmage">Scrimmage</option>
               <option value="Practice">Practice</option>
@@ -325,7 +545,11 @@ export default function OffersPage() {
 
           <div style={{ flex: 1, minWidth: 240 }}>
             <label style={label}>Notes</label>
-            <input style={{ ...input, width: "100%" }} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <input
+              style={{ ...input, width: "100%" }}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
           </div>
 
           <button style={button} onClick={createSlot} disabled={loading}>
@@ -382,11 +606,11 @@ export default function OffersPage() {
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <button
                           style={buttonSecondary}
-                          onClick={() => acceptSlot(s)}
+                          onClick={() => requestSlot(s)}
                           disabled={loading || !isOpen}
-                          title="Accept this slot"
+                          title="Request this slot (creates a pending request)"
                         >
-                          Accept
+                          Request
                         </button>
 
                         <button
@@ -407,7 +631,8 @@ export default function OffersPage() {
         </table>
 
         <div style={{ marginTop: 10, color: "#666", fontSize: 12 }}>
-          Note: “Accept” is wired to <code>{ACCEPT_ROUTE("Division", "SlotId")}</code>. If your Function App uses a different route or method, update <code>ACCEPT_ROUTE</code> and the HTTP method in <code>acceptSlot()</code>.
+          Request posts to <code>{REQUEST_ROUTE("Division", "SlotId")}</code>. Admin approval happens via
+          <code> /api/slots/&lt;division&gt;/&lt;slotId&gt;/requests/&lt;requestId&gt;/approve</code>.
         </div>
       </div>
     </div>
