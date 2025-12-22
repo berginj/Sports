@@ -1,66 +1,77 @@
+// src/lib/useSession.js
 import { useEffect, useState } from "react";
 import { apiFetch } from "./api";
 
-/**
- * Loads identity from Functions.
- * Endpoint: GET /api/me  (GetMe.cs)
- *
- * Note:
- * - /api/me returns memberships[] even when leagueId header isn't provided.
- * - To compute isMember/role, the API needs x-league-id (or ?leagueId=...).
- */
+const STORAGE_KEY = "activeLeagueId";
+
+export function persistLeagueId(leagueId) {
+  const id = (leagueId || "").trim();
+  if (id) localStorage.setItem(STORAGE_KEY, id);
+  else localStorage.removeItem(STORAGE_KEY);
+}
+
+function readPersistedLeagueId() {
+  return (localStorage.getItem(STORAGE_KEY) || "").trim();
+}
+
+function normalizeMemberships(me) {
+  // Support both shapes, but prefer camelCase going forward.
+  const m =
+    (Array.isArray(me?.memberships) && me.memberships) ||
+    (Array.isArray(me?.Memberships) && me.Memberships) ||
+    [];
+
+  // Normalize each entry to { leagueId, role }
+  return m
+    .map((x) => ({
+      leagueId: (x?.leagueId ?? x?.LeagueId ?? "").trim(),
+      role: (x?.role ?? x?.Role ?? "").trim(),
+    }))
+    .filter((x) => x.leagueId);
+}
+
+export function getInitialLeagueId(me) {
+  const memberships = normalizeMemberships(me);
+
+  const saved = readPersistedLeagueId();
+  if (saved && memberships.some((m) => m.leagueId === saved)) return saved;
+
+  const first = memberships[0]?.leagueId || "";
+  if (first) persistLeagueId(first);
+  return first;
+}
+
 export function useSession() {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      setLoading(true);
-      setError("");
-
+    (async () => {
       try {
-        // First call: get identity + memberships (no league header required)
-        const base = await apiFetch("/api/me", { method: "GET" });
-        if (cancelled) return;
+        setLoading(true);
+        setError("");
+        const data = await apiFetch("/api/me", { method: "GET" });
 
-        // Choose a league (stored first, otherwise first membership)
-        const initialLeagueId = getInitialLeagueId(base);
+        // Normalize into camelCase for the UI
+        const memberships = normalizeMemberships(data);
+        const normalized = {
+          userId: data?.userId ?? data?.UserId ?? "",
+          email: data?.email ?? data?.Email ?? "",
+          leagueId: data?.leagueId ?? data?.LeagueId ?? "",
+          isMember: !!(data?.isMember ?? data?.IsMember),
+          role: data?.role ?? data?.Role ?? "",
+          memberships,
+        };
 
-        // If we have a league, call /api/me again with x-league-id so API can set isMember/role
-        const data =
-          initialLeagueId
-            ? await apiFetch("/api/me", { method: "GET", leagueId: initialLeagueId })
-            : base;
-
-        if (!cancelled) setMe(data);
+        setMe(normalized);
       } catch (e) {
-        if (!cancelled) setError(String(e?.message || e));
+        setError(String(e?.message || e));
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
-    }
-
-    load();
-    return () => { cancelled = true; };
+    })();
   }, []);
 
   return { me, loading, error };
-}
-
-const LS_KEY = "gameswap.activeLeagueId";
-
-export function getInitialLeagueId(me) {
-  const stored = window.localStorage.getItem(LS_KEY) || "";
-  const memberships = Array.isArray(me?.memberships) ? me.memberships : [];
-
-  if (stored && memberships.some((m) => m?.leagueId === stored)) return stored;
-  return memberships[0]?.leagueId || "";
-}
-
-export function persistLeagueId(leagueId) {
-  if (!leagueId) return;
-  window.localStorage.setItem(LS_KEY, leagueId);
 }

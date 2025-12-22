@@ -1,86 +1,95 @@
-import { useEffect, useState } from "react";
+// src/components/DivisionsManager.jsx
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
 
-export default function DivisionsManager() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+export default function DivisionsManager({ leagueId }) {
+  const [divs, setDivs] = useState([]);
+  const [err, setErr] = useState("");
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const [newName, setNewName] = useState("");
-  const [newCode, setNewCode] = useState("");
+  const canSubmit = useMemo(() => name.trim().length > 0, [name]);
 
   async function load() {
-    setLoading(true);
-    setError("");
     try {
-      const data = await apiFetch("/api/divisions");
-      setItems(Array.isArray(data) ? data : []);
+      setErr("");
+      const data = await apiFetch("/divisions", { leagueId });
+      setDivs(Array.isArray(data) ? data : []);
     } catch (e) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
+      setErr(String(e?.message || e));
+      setDivs([]);
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueId]);
 
   async function create() {
-    setError("");
     try {
-      const payload = { name: newName, code: newCode || undefined, isActive: true };
-      await apiFetch("/api/divisions", { method: "POST", body: JSON.stringify(payload) });
-      setNewName("");
-      setNewCode("");
+      setSaving(true);
+      setErr("");
+      await apiFetch("/divisions", {
+        method: "POST",
+        leagueId,
+        body: { name: name.trim(), code: code.trim() || undefined, isActive: true },
+      });
+      setName("");
+      setCode("");
       await load();
     } catch (e) {
-      setError(String(e?.message || e));
+      setErr(String(e?.message || e));
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function toggleActive(id, isActive) {
-    setError("");
-    const current = items.find((x) => x.id === id);
-    if (!current) return;
+  async function toggle(d) {
     try {
-      await apiFetch(`/api/divisions/${encodeURIComponent(id)}`, {
+      setErr("");
+      await apiFetch(`/divisions/${encodeURIComponent(d.id)}`, {
         method: "PUT",
-        body: JSON.stringify({ name: current.name, code: current.code, isActive }),
+        leagueId,
+        body: { name: d.name, code: d.code, isActive: !d.isActive },
       });
       await load();
     } catch (e) {
-      setError(String(e?.message || e));
+      setErr(String(e?.message || e));
     }
   }
 
   return (
     <section className="card">
-      <div className="row row--space">
+      <div className="card__header">
+        <h2 style={{ margin: 0 }}>Divisions</h2>
+        <button onClick={load}>Refresh</button>
+      </div>
+
+      {err && <div className="error">{err}</div>}
+
+      <div className="grid2">
         <div>
-          <div className="h2">Divisions</div>
-          <div className="muted">Global list used for slot filtering and admin maintenance.</div>
+          <label className="label">Name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., 10U" />
         </div>
-        <button className="btn" onClick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
-      </div>
-
-      {error && <div className="alert alert--danger">{error}</div>}
-
-      <div className="formGrid">
-        <div className="control">
-          <label>Name</label>
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Ponytail (4th Grade)" />
-        </div>
-        <div className="control">
-          <label>Code (optional)</label>
-          <input value={newCode} onChange={(e) => setNewCode(e.target.value)} placeholder="ponytail-4th" />
-        </div>
-        <div className="control control--end">
-          <button className="btn btn--primary" onClick={create} disabled={!newName.trim()}>
-            Create
-          </button>
+        <div>
+          <label className="label">Code (optional)</label>
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g., 10u" />
         </div>
       </div>
 
-      <div className="tableWrap">
+      <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
+        <button onClick={create} disabled={!canSubmit || saving}>
+          {saving ? "Saving…" : "Add Division"}
+        </button>
+        <div className="muted">
+          Any league member can manage divisions for now. We can tighten roles later.
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, overflowX: "auto" }}>
         <table className="table">
           <thead>
             <tr>
@@ -91,20 +100,22 @@ export default function DivisionsManager() {
             </tr>
           </thead>
           <tbody>
-            {items.map((d) => (
+            {divs.map((d) => (
               <tr key={d.id}>
-                <td><code>{d.code}</code></td>
+                <td>{d.code}</td>
                 <td>{d.name}</td>
-                <td>{String(d.isActive ?? true)}</td>
-                <td className="row row--end">
-                  <button className="btn btn--sm" onClick={() => toggleActive(d.id, !(d.isActive ?? true))}>
-                    {(d.isActive ?? true) ? "Disable" : "Enable"}
-                  </button>
+                <td>{d.isActive ? "Yes" : "No"}</td>
+                <td style={{ textAlign: "right" }}>
+                  <button onClick={() => toggle(d)}>{d.isActive ? "Deactivate" : "Activate"}</button>
                 </td>
               </tr>
             ))}
-            {items.length === 0 && !loading && (
-              <tr><td colSpan={4} className="muted">No divisions yet.</td></tr>
+            {divs.length === 0 && (
+              <tr>
+                <td colSpan={4} className="muted">
+                  No divisions yet.
+                </td>
+              </tr>
             )}
           </tbody>
         </table>

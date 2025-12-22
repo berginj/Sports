@@ -1,88 +1,73 @@
-import { useEffect, useMemo, useState } from "react";
+// src/pages/FieldsPage.jsx
+import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api";
 
 export default function FieldsPage({ leagueId }) {
-  const [items, setItems] = useState([]);
-  const [activeOnly, setActiveOnly] = useState(true);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [fields, setFields] = useState([]);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  async function load() {
-    if (!leagueId) return;
-    setLoading(true);
-    setError("");
+  async function refresh() {
     try {
-      const data = await apiFetch("/api/fields", { leagueId, query: { activeOnly } });
-      setItems(Array.isArray(data) ? data : []);
+      setLoading(true);
+      setErr("");
+      const data = await apiFetch("/fields?activeOnly=true", { leagueId });
+      setFields(Array.isArray(data) ? data : []);
     } catch (e) {
-      setError(String(e?.message || e));
+      setErr(String(e?.message || e));
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { load(); }, [leagueId, activeOnly]);
-
-  const countLabel = useMemo(() => `${items.length} field${items.length === 1 ? "" : "s"}`, [items.length]);
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueId]);
 
   return (
     <section className="card">
-      <div className="row row--space">
-        <div>
-          <div className="h2">Fields</div>
-          <div className="muted">{countLabel}</div>
-        </div>
-
-        <div className="row">
-          <label className="checkbox">
-            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />
-            Active only
-          </label>
-          <button className="btn" onClick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
-        </div>
+      <div className="card__header">
+        <h2 style={{ margin: 0 }}>Fields</h2>
+        <button onClick={refresh} disabled={loading}>
+          Refresh
+        </button>
       </div>
 
-      {error && <div className="alert alert--danger">{error}</div>}
-
-      <div className="tableWrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Park</th>
-              <th>Field</th>
-              <th>Display</th>
-              <th>Active</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((f) => (
-              <tr key={f.FieldKey || `${f.ParkCode}/${f.FieldCode}` || `${f.ParkName}|${f.FieldName}`}>
-                <td>{f.ParkName}</td>
-                <td>{f.FieldName}</td>
-                <td className="muted">{f.DisplayName}</td>
-                <td>{String(f.IsActive ?? true)}</td>
+      {err && <div className="error">{err}</div>}
+      {loading ? (
+        <div className="muted">Loading…</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Display</th>
+                <th>Park</th>
+                <th>Field</th>
+                <th>Active</th>
               </tr>
-            ))}
-            {items.length === 0 && !loading && (
-              <tr><td colSpan={4} className="muted">No fields yet. Import fields to get started.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* mobile cards */}
-      <div className="cards cards--mobile">
-        {items.map((f) => (
-          <div key={f.FieldKey || `${f.ParkCode}/${f.FieldCode}` || `${f.ParkName}|${f.FieldName}`} className="miniCard">
-            <div className="miniCard__title">{f.DisplayName || `${f.ParkName} > ${f.FieldName}`}</div>
-            <div className="miniCard__meta">
-              <span className="pill">{f.ParkName}</span>
-              <span className="pill">{f.FieldName}</span>
-              <span className="pill">{(f.IsActive ?? true) ? "Active" : "Inactive"}</span>
-            </div>
-          </div>
-        ))}
-      </div>
+            </thead>
+            <tbody>
+              {fields.map((f) => (
+                <tr key={f.fieldKey || f.id || `${f.parkName}-${f.fieldName}`}>
+                  <td>{f.displayName || ""}</td>
+                  <td>{f.parkName || ""}</td>
+                  <td>{f.fieldName || ""}</td>
+                  <td>{f.isActive ? "Yes" : "No"}</td>
+                </tr>
+              ))}
+              {fields.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="muted">
+                    No fields yet. Import some using the Fields Import section below.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
