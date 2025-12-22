@@ -1,23 +1,29 @@
-import { useState } from "react";
-import DivisionsManager from "../manage/DivisionsManager";
+import FieldsPage from "./FieldsPage";
+import FieldsImport from "../components/FieldsImport";
+import SlotsImport from "../components/SlotsImport";
+import DivisionsManager from "../components/DivisionsManager";
 
-export default function ManagePage() {
-  const [subTab, setSubTab] = useState("divisions"); // later: teams, fields
-
+export default function ManagePage({ leagueId }) {
   return (
-    <div style={{ padding: 16 }}>
-      <h2>Manage</h2>
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button onClick={() => setSubTab("divisions")} disabled={subTab === "divisions"}>
-          Divisions
-        </button>
-        {/* later */}
-        {/* <button onClick={() => setSubTab("teams")}>Teams</button> */}
-        {/* <button onClick={() => setSubTab("fields")}>Fields</button> */}
+    <div className="stack">
+      <div className="card">
+        <div className="h2">Manage</div>
+        <p className="muted">
+          Imports are league-scoped. Make sure the correct league is selected in the top bar.
+        </p>
       </div>
 
-      {subTab === "divisions" && <DivisionsManager />}
+      <div className="grid grid--2">
+        <div className="stack">
+          <FieldsPage leagueId={leagueId} />
+          <DivisionsManager />
+        </div>
+
+        <div className="stack">
+          <FieldsImport leagueId={leagueId} />
+          <SlotsImport leagueId={leagueId} />
+        </div>
+      </div>
     </div>
   );
 }

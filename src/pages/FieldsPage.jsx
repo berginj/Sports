@@ -1,22 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
 
 export default function FieldsPage({ leagueId }) {
+  const [items, setItems] = useState([]);
   const [activeOnly, setActiveOnly] = useState(true);
-  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
     if (!leagueId) return;
-    setError("");
     setLoading(true);
+    setError("");
     try {
-      const data = await apiFetch(
-        `/api/leagues/${encodeURIComponent(leagueId)}/fields?activeOnly=${activeOnly ? "true" : "false"}`,
-        { method: "GET" }
-      );
-      setRows(Array.isArray(data) ? data : (data?.items || []));
+      const data = await apiFetch("/api/fields", { leagueId, query: { activeOnly } });
+      setItems(Array.isArray(data) ? data : []);
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -26,62 +23,66 @@ export default function FieldsPage({ leagueId }) {
 
   useEffect(() => { load(); }, [leagueId, activeOnly]);
 
-  const card = { border: "1px solid #e6e6e6", borderRadius: 10, padding: 14, background: "white" };
-  const msgErr = { background: "#fff3f3", border: "1px solid #ffd2d2", color: "#8a0000", padding: 10, borderRadius: 10, marginTop: 10 };
-  const table = { width: "100%", borderCollapse: "collapse", marginTop: 12 };
-  const th = { textAlign: "left", padding: 10, borderBottom: "2px solid #eee", fontSize: 12, color: "#444" };
-  const td = { padding: 10, borderBottom: "1px solid #eee", verticalAlign: "top" };
+  const countLabel = useMemo(() => `${items.length} field${items.length === 1 ? "" : "s"}`, [items.length]);
 
   return (
-    <div style={card}>
-      <h3 style={{ marginTop: 0 }}>Fields</h3>
+    <section className="card">
+      <div className="row row--space">
+        <div>
+          <div className="h2">Fields</div>
+          <div className="muted">{countLabel}</div>
+        </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={activeOnly}
-            onChange={(e) => setActiveOnly(e.target.checked)}
-          />
-          Active only
-        </label>
-
-        <div style={{ flex: 1 }} />
-        <button onClick={load} disabled={loading}>
-          {loading ? "Loading..." : "Refresh"}
-        </button>
+        <div className="row">
+          <label className="checkbox">
+            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />
+            Active only
+          </label>
+          <button className="btn" onClick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
+        </div>
       </div>
 
-      {error ? <div style={msgErr}>{error}</div> : null}
+      {error && <div className="alert alert--danger">{error}</div>}
 
-      <table style={table}>
-        <thead>
-          <tr>
-            <th style={th}>Name</th>
-            <th style={th}>Surface</th>
-            <th style={th}>Lights</th>
-            <th style={th}>Active</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr><td style={td} colSpan={4}>{loading ? "Loading..." : "No fields found."}</td></tr>
-          ) : (
-            rows.map((f) => (
-              <tr key={f.FieldId || f.id}>
-                <td style={td}>{f.Name ?? f.name ?? ""}</td>
-                <td style={td}>{f.Surface ?? f.surface ?? "—"}</td>
-                <td style={td}>{String(!!(f.Lights ?? f.lights))}</td>
-                <td style={td}>{String(!!(f.IsActive ?? f.isActive ?? true))}</td>
+      <div className="tableWrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Park</th>
+              <th>Field</th>
+              <th>Display</th>
+              <th>Active</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((f) => (
+              <tr key={f.FieldKey || `${f.ParkCode}/${f.FieldCode}` || `${f.ParkName}|${f.FieldName}`}>
+                <td>{f.ParkName}</td>
+                <td>{f.FieldName}</td>
+                <td className="muted">{f.DisplayName}</td>
+                <td>{String(f.IsActive ?? true)}</td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-
-      <div style={{ marginTop: 10, color: "#666", fontSize: 12 }}>
-        Expected API: <code>GET /api/leagues/{leagueId}/fields</code>
+            ))}
+            {items.length === 0 && !loading && (
+              <tr><td colSpan={4} className="muted">No fields yet. Import fields to get started.</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
-    </div>
+
+      {/* mobile cards */}
+      <div className="cards cards--mobile">
+        {items.map((f) => (
+          <div key={f.FieldKey || `${f.ParkCode}/${f.FieldCode}` || `${f.ParkName}|${f.FieldName}`} className="miniCard">
+            <div className="miniCard__title">{f.DisplayName || `${f.ParkName} > ${f.FieldName}`}</div>
+            <div className="miniCard__meta">
+              <span className="pill">{f.ParkName}</span>
+              <span className="pill">{f.FieldName}</span>
+              <span className="pill">{(f.IsActive ?? true) ? "Active" : "Inactive"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

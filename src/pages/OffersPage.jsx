@@ -1,70 +1,75 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiFetch, apiBase } from "../lib/api";
+import { apiFetch } from "../lib/api";
 
-const DEFAULT_DIVISION = "Ponytail-4th";
-
-/**
- * Configure your backend routes here (one place).
- */
-const CANCEL_ROUTE = (div, slotId) =>
-  `/api/slots/${encodeURIComponent(div)}/${encodeURIComponent(slotId)}/cancel`;
-
-const REQUEST_ROUTE = (div, slotId) =>
-  `/api/slots/${encodeURIComponent(div)}/${encodeURIComponent(slotId)}/requests`;
+function uniq(arr) {
+  const out = [];
+  const seen = new Set();
+  for (const x of arr) {
+    const k = String(x ?? "");
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+  }
+  return out;
+}
 
 export default function OffersPage({ leagueId, me }) {
-  // Filters + list
-  const [division, setDivision] = useState(DEFAULT_DIVISION);
-  const [statusFilter, setStatusFilter] = useState("Open");
+  const [divisions, setDivisions] = useState([]);
+  const [fields, setFields] = useState([]);
+
+  const [division, setDivision] = useState("");
+  const [status, setStatus] = useState(""); // "", Open, Pending, Confirmed, Cancelled
+
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(false);
-
-  // Fields (real, league-scoped)
-  const [fieldsLoading, setFieldsLoading] = useState(false);
-  const [fieldsList, setFieldsList] = useState([]);
-
-  // "Who am I?" (needed for Request)
-  const [myTeamId, setMyTeamId] = useState("3");
-
-  // Create form
-  const [offeringTeamId, setOfferingTeamId] = useState("3");
-  const [gameDate, setGameDate] = useState("2025-12-25");
-  const [startTime, setStartTime] = useState("18:00");
-  const [endTime, setEndTime] = useState("19:30");
-
-  // Field selection
-  const [fieldMode, setFieldMode] = useState("select"); // "select" | "custom"
-  const [field, setField] = useState("Gunston Park > Turf Field");
-  const [customField, setCustomField] = useState("");
-
-  const [gameType, setGameType] = useState("Swap");
-  const [notes, setNotes] = useState("");
-
-  // UI messages
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
-  const filteredSlots = useMemo(() => {
-    const s = Array.isArray(slots) ? slots : [];
-    if (!statusFilter || statusFilter === "All") return s;
-    return s.filter(
-      (x) => String(x?.Status || "").toLowerCase() === statusFilter.toLowerCase()
-    );
-  }, [slots, statusFilter]);
+  const [expanded, setExpanded] = useState(""); // slotId
+  const [requests, setRequests] = useState({}); // slotId -> requests[]
+  const [requestsBusy, setRequestsBusy] = useState({}); // slotId -> bool
 
-  function formatDateISO(d) {
-    return d; // expects YYYY-MM-DD
+  // create form
+  const [form, setForm] = useState({
+    division: "",
+    offeringTeamId: "",
+    offeringEmail: me?.Email || "",
+    gameDate: "",
+    startTime: "",
+    endTime: "",
+    parkName: "",
+    fieldName: "",
+    gameType: "Swap",
+    notes: "",
+  });
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createMsg, setCreateMsg] = useState("");
+
+  // request form
+  const [requestingTeamId, setRequestingTeamId] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestMsg, setRequestMsg] = useState("");
+
+  async function loadBootstrap() {
+    if (!leagueId) return;
+    try {
+      const [divs, f] = await Promise.all([
+        apiFetch("/api/divisions").catch(() => []),
+        apiFetch("/api/fields", { leagueId, query: { activeOnly: true } }).catch(() => []),
+      ]);
+      setDivisions(Array.isArray(divs) ? divs : []);
+      setFields(Array.isArray(f) ? f : []);
+    } catch {
+      // ignore; individual calls already handled
+    }
   }
 
-  async function refresh() {
-    setError("");
-    setSuccess("");
+  async function loadSlots() {
+    if (!leagueId) return;
     setLoading(true);
+    setError("");
     try {
-      const data = await apiFetch(
-        `/api/slots?division=${encodeURIComponent(division)}`,
-        { method: "GET" }
-      );
+      const data = await apiFetch("/api/slots", { leagueId, query: { division: division || undefined, status: status || undefined } });
       setSlots(Array.isArray(data) ? data : []);
     } catch (e) {
       setError(String(e?.message || e));
@@ -73,568 +78,380 @@ export default function OffersPage({ leagueId, me }) {
     }
   }
 
-  async function loadFields() {
-    if (!leagueId) return;
-    setFieldsLoading(true);
-    try {
-      const data = await apiFetch(
-        `/api/leagues/${encodeURIComponent(leagueId)}/fields?activeOnly=true`,
-        { method: "GET" }
-      );
-      const list = Array.isArray(data) ? data : [];
-      setFieldsList(list);
+  useEffect(() => { loadBootstrap(); }, [leagueId]);
+  useEffect(() => { loadSlots(); }, [leagueId, division, status]);
 
-      // If we're in select mode, ensure selection stays valid
-      if (list.length > 0 && fieldMode === "select") {
-        const names = new Set(list.map((f) => String(f?.Name || "")));
-        if (!names.has(field)) {
-          const first = String(list[0]?.Name || "");
-          if (first) setField(first);
-        }
-      }
-    } catch (e) {
-      // Don’t block the page; fallback to custom text
-      console.warn("ListFields failed:", e);
-      setFieldsList([]);
-    } finally {
-      setFieldsLoading(false);
-    }
-  }
+  const parks = useMemo(() => uniq(fields.map((f) => f.ParkName).filter(Boolean)).sort(), [fields]);
+  const fieldsForPark = useMemo(() => {
+    if (!form.parkName) return [];
+    return fields
+      .filter((f) => (f.ParkName || "").toLowerCase() === form.parkName.toLowerCase())
+      .map((f) => f.FieldName)
+      .filter(Boolean)
+      .sort();
+  }, [fields, form.parkName]);
 
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [division]);
-
-  useEffect(() => {
-    loadFields();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leagueId]);
-
-  function effectiveField() {
-    if (fieldMode === "custom") return String(customField || "").trim();
-    return String(field || "").trim();
+  function setFormField(k, v) {
+    setForm((s) => ({ ...s, [k]: v }));
   }
 
   async function createSlot() {
+    setCreateMsg("");
     setError("");
-    setSuccess("");
-
-    const effField = effectiveField();
+    if (!leagueId) return;
 
     const payload = {
-      division,
-      offeringTeamId: String(offeringTeamId || "").trim(),
-      gameDate: formatDateISO(gameDate),
-      startTime,
-      endTime,
-      field: effField,
-      gameType,
-      notes,
+      division: form.division.trim(),
+      offeringTeamId: form.offeringTeamId.trim(),
+      offeringEmail: (form.offeringEmail || "").trim(),
+      gameDate: form.gameDate.trim(),
+      startTime: form.startTime.trim(),
+      endTime: form.endTime.trim(),
+      parkName: form.parkName.trim(),
+      fieldName: form.fieldName.trim(),
+      gameType: (form.gameType || "Swap").trim(),
+      notes: (form.notes || "").trim(),
     };
 
-    if (!payload.offeringTeamId) {
-      setError("OfferingTeamId is required.");
-      return;
-    }
-    if (!payload.field) {
-      setError("Field is required.");
-      return;
+    // quick validation for user sanity
+    const required = ["division", "offeringTeamId", "gameDate", "startTime", "endTime", "parkName", "fieldName"];
+    for (const k of required) {
+      if (!payload[k]) {
+        setCreateMsg(`Missing required: ${k}`);
+        return;
+      }
     }
 
-    setLoading(true);
+    setCreateBusy(true);
     try {
-      const data = await apiFetch(`/api/slots`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      const slotId = data?.SlotId || data?.slotId || "";
-      setSuccess(slotId ? `Posted! SlotId: ${slotId}` : "Posted!");
-      await refresh();
+      await apiFetch("/api/slots", { method: "POST", leagueId, body: JSON.stringify(payload) });
+      setCreateMsg("Created.");
+      setForm((s) => ({ ...s, notes: "" }));
+      await loadSlots();
     } catch (e) {
-      setError(String(e?.message || e));
+      setCreateMsg(String(e?.message || e));
     } finally {
-      setLoading(false);
+      setCreateBusy(false);
     }
   }
 
   async function cancelSlot(slot) {
+    if (!leagueId) return;
+    if (!slot?.Division || !slot?.SlotId) return;
     setError("");
-    setSuccess("");
-
-    const slotId = slot?.SlotId;
-    const div = slot?.Division || division;
-    if (!slotId) {
-      setError("Missing SlotId");
-      return;
-    }
-
-    setLoading(true);
     try {
-      await apiFetch(CANCEL_ROUTE(div, slotId), { method: "PATCH" });
-      setSuccess(`Cancelled: ${slotId}`);
-      await refresh();
+      await apiFetch(`/api/slots/${encodeURIComponent(slot.Division)}/${encodeURIComponent(slot.SlotId)}/cancel`, {
+        method: "PATCH",
+        leagueId,
+      });
+      await loadSlots();
     } catch (e) {
       setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
     }
   }
 
-  async function requestSlot(slot) {
-    setError("");
-    setSuccess("");
-
-    const slotId = slot?.SlotId;
-    const div = slot?.Division || division;
-
-    if (!slotId) {
-      setError("Missing SlotId");
-      return;
-    }
-    if (!String(myTeamId || "").trim()) {
-      setError("MyTeamId is required to request a slot.");
-      return;
-    }
-
-    setLoading(true);
+  async function loadRequests(slot) {
+    if (!leagueId || !slot?.Division || !slot?.SlotId) return;
+    const key = slot.SlotId;
+    setRequestsBusy((s) => ({ ...s, [key]: true }));
     try {
-      await apiFetch(REQUEST_ROUTE(div, slotId), {
+      const data = await apiFetch(`/api/slots/${encodeURIComponent(slot.Division)}/${encodeURIComponent(slot.SlotId)}/requests`, {
+        leagueId,
+      });
+      setRequests((s) => ({ ...s, [key]: Array.isArray(data) ? data : [] }));
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setRequestsBusy((s) => ({ ...s, [key]: false }));
+    }
+  }
+
+  async function approveRequest(slot, reqItem) {
+    if (!leagueId) return;
+    setError("");
+    try {
+      await apiFetch(
+        `/api/slots/${encodeURIComponent(slot.Division)}/${encodeURIComponent(slot.SlotId)}/requests/${encodeURIComponent(reqItem.RequestId)}/approve`,
+        { method: "PATCH", leagueId }
+      );
+      await Promise.all([loadSlots(), loadRequests(slot)]);
+    } catch (e) {
+      setError(String(e?.message || e));
+    }
+  }
+
+  async function submitRequest(slot) {
+    if (!leagueId) return;
+    setRequestBusy(true);
+    setRequestMsg("");
+    setError("");
+    try {
+      const payload = {
+        requestingTeamId: requestingTeamId.trim(),
+        requestingEmail: (me?.Email || "").trim(),
+        message: requestMessage.trim(),
+      };
+      if (!payload.requestingTeamId) {
+        setRequestMsg("RequestingTeamId is required.");
+        return;
+      }
+
+      await apiFetch(`/api/slots/${encodeURIComponent(slot.Division)}/${encodeURIComponent(slot.SlotId)}/requests`, {
         method: "POST",
-        body: JSON.stringify({
-          requestingTeamId: String(myTeamId).trim(),
-          requestingEmail: me?.Email || "",
-          message: "",
-        }),
+        leagueId,
+        body: JSON.stringify(payload),
       });
 
-      setSuccess(`Requested: ${slotId}`);
-      await refresh();
+      setRequestingTeamId("");
+      setRequestMessage("");
+      setRequestMsg("Request submitted.");
+      await Promise.all([loadSlots(), loadRequests(slot)]);
     } catch (e) {
-      setError(String(e?.message || e));
+      setRequestMsg(String(e?.message || e));
     } finally {
-      setLoading(false);
+      setRequestBusy(false);
     }
   }
 
-  // Basic inline styles (dependency-free)
-  const page = {
-    fontFamily:
-      "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-    padding: 18,
-    maxWidth: 1100,
-    margin: "0 auto",
-  };
-  const row = {
-    display: "flex",
-    gap: 12,
-    flexWrap: "wrap",
-    alignItems: "end",
-  };
-  const card = {
-    border: "1px solid #e6e6e6",
-    borderRadius: 10,
-    padding: 14,
-    background: "white",
-  };
-  const label = {
-    display: "block",
-    fontSize: 12,
-    color: "#555",
-    marginBottom: 6,
-  };
-  const input = {
-    padding: 10,
-    borderRadius: 8,
-    border: "1px solid #ccc",
-    minWidth: 180,
-  };
-  const smallInput = {
-    padding: 10,
-    borderRadius: 8,
-    border: "1px solid #ccc",
-    minWidth: 120,
-  };
-  const button = {
-    padding: "10px 14px",
-    borderRadius: 10,
-    border: "1px solid #222",
-    background: "#111",
-    color: "white",
-    cursor: "pointer",
-  };
-  const buttonSecondary = {
-    padding: "10px 14px",
-    borderRadius: 10,
-    border: "1px solid #999",
-    background: "white",
-    color: "#111",
-    cursor: "pointer",
-  };
-  const msgErr = {
-    background: "#fff3f3",
-    border: "1px solid #ffd2d2",
-    color: "#8a0000",
-    padding: 10,
-    borderRadius: 10,
-    marginTop: 10,
-  };
-  const msgOk = {
-    background: "#f3fff5",
-    border: "1px solid #c9ffd3",
-    color: "#0a6b1f",
-    padding: 10,
-    borderRadius: 10,
-    marginTop: 10,
-  };
-  const table = { width: "100%", borderCollapse: "collapse", marginTop: 12 };
-  const th = {
-    textAlign: "left",
-    padding: 10,
-    borderBottom: "2px solid #eee",
-    fontSize: 12,
-    color: "#444",
-  };
-  const td = {
-    padding: 10,
-    borderBottom: "1px solid #eee",
-    verticalAlign: "top",
-  };
-  const pill = (bg, fg) => ({
-    display: "inline-block",
-    padding: "2px 8px",
-    borderRadius: 999,
-    background: bg,
-    color: fg,
-    fontSize: 12,
-  });
-
-  function statusPill(statusRaw) {
-    const s = String(statusRaw || "").toLowerCase();
-    if (s === "open") return <span style={pill("#eef6ff", "#084298")}>Open</span>;
-    if (s === "pending") return (
-      <span style={pill("#fff3cd", "#664d03")}>Pending</span>
-    );
-    if (s === "confirmed") return (
-      <span style={pill("#d1e7dd", "#0f5132")}>Confirmed</span>
-    );
-    if (s === "cancelled") return (
-      <span style={pill("#f8d7da", "#842029")}>Cancelled</span>
-    );
-    return <span>{String(statusRaw || "")}</span>;
+  function slotTitle(s) {
+    const when = `${s.GameDate} ${s.StartTime}–${s.EndTime}`;
+    const where = s.DisplayName || `${s.ParkName} > ${s.FieldName}`;
+    return `${when} • ${where}`;
   }
 
   return (
-    <div style={page}>
-      <h1 style={{ margin: "0 0 6px 0" }}>GameSwap</h1>
-      <div style={{ color: "#555", marginBottom: 14 }}>
-        API Base: <code>{apiBase() || "(relative /api — SWA integrated API)"}</code>
-      </div>
-
-      {leagueId ? (
-        <div style={{ color: "#555", marginBottom: 14 }}>
-          Active League: <code>{leagueId}</code>{" "}
-          <button
-            style={{ ...buttonSecondary, marginLeft: 10, padding: "6px 10px" }}
-            onClick={loadFields}
-            disabled={fieldsLoading}
-            title="Reload fields list"
-          >
-            {fieldsLoading ? "Loading fields..." : "Reload fields"}
+    <div className="stack">
+      <section className="card">
+        <div className="row row--space">
+          <div>
+            <div className="h2">Offers</div>
+            <div className="muted">
+              Create slots, request swaps, and approve requests. League-scoped via <code>x-league-id</code>.
+            </div>
+          </div>
+          <button className="btn" onClick={loadSlots} disabled={loading}>
+            {loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
-      ) : (
-        <div style={{ color: "#8a0000", marginBottom: 14 }}>
-          No leagueId provided to OffersPage. Fields dropdown will be disabled.
-        </div>
-      )}
 
-      <div style={{ ...card, marginBottom: 14 }}>
-        <div style={row}>
-          <div>
-            <label style={label}>Division</label>
-            <input
-              style={input}
-              value={division}
-              onChange={(e) => setDivision(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label style={label}>Status filter</label>
-            <select
-              style={input}
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="Open">Open</option>
-              <option value="Pending">Pending</option>
-              <option value="Confirmed">Confirmed</option>
-              <option value="Cancelled">Cancelled</option>
-              <option value="All">All</option>
+        <div className="formGrid">
+          <div className="control">
+            <label>Division filter</label>
+            <select value={division} onChange={(e) => setDivision(e.target.value)}>
+              <option value="">(all)</option>
+              {divisions.map((d) => (
+                <option key={d.id} value={d.code}>{d.name}</option>
+              ))}
             </select>
           </div>
 
-          <div>
-            <label style={label}>MyTeamId (for Request)</label>
-            <input
-              style={smallInput}
-              value={myTeamId}
-              onChange={(e) => setMyTeamId(e.target.value)}
-            />
-          </div>
-
-          <button style={buttonSecondary} onClick={refresh} disabled={loading}>
-            {loading ? "Loading..." : "Refresh"}
-          </button>
-        </div>
-
-        {error ? <div style={msgErr}>{error}</div> : null}
-        {success ? <div style={msgOk}>{success}</div> : null}
-      </div>
-
-      <div style={{ ...card, marginBottom: 14 }}>
-        <h2 style={{ marginTop: 0 }}>Post a slot</h2>
-        <div style={row}>
-          <div>
-            <label style={label}>OfferingTeamId</label>
-            <input
-              style={smallInput}
-              value={offeringTeamId}
-              onChange={(e) => setOfferingTeamId(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label style={label}>GameDate (YYYY-MM-DD)</label>
-            <input
-              style={smallInput}
-              value={gameDate}
-              onChange={(e) => setGameDate(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label style={label}>Start</label>
-            <input
-              style={smallInput}
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label style={label}>End</label>
-            <input
-              style={smallInput}
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-            />
-          </div>
-
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <label style={label}>Field</label>
-
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <label
-                style={{
-                  display: "inline-flex",
-                  gap: 6,
-                  alignItems: "center",
-                  fontSize: 12,
-                  color: "#555",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="fieldMode"
-                  checked={fieldMode === "select"}
-                  onChange={() => setFieldMode("select")}
-                  disabled={!leagueId}
-                />
-                Pick
-              </label>
-
-              <label
-                style={{
-                  display: "inline-flex",
-                  gap: 6,
-                  alignItems: "center",
-                  fontSize: 12,
-                  color: "#555",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="fieldMode"
-                  checked={fieldMode === "custom"}
-                  onChange={() => setFieldMode("custom")}
-                />
-                Custom
-              </label>
-            </div>
-
-            {fieldMode === "select" ? (
-              <select
-                style={{
-                  ...input,
-                  width: "100%",
-                  minWidth: 240,
-                  marginTop: 8,
-                }}
-                value={field}
-                onChange={(e) => setField(e.target.value)}
-                disabled={!leagueId || fieldsLoading || fieldsList.length === 0}
-              >
-                {fieldsList.length === 0 ? (
-                  <option value="">
-                    {leagueId
-                      ? fieldsLoading
-                        ? "Loading fields..."
-                        : "No fields available"
-                      : "No league selected"}
-                  </option>
-                ) : (
-                  fieldsList.map((f) => (
-                    <option key={f.FieldId} value={f.Name}>
-                      {f.Name}
-                    </option>
-                  ))
-                )}
-              </select>
-            ) : (
-              <input
-                style={{
-                  ...input,
-                  width: "100%",
-                  minWidth: 240,
-                  marginTop: 8,
-                }}
-                value={customField}
-                onChange={(e) => setCustomField(e.target.value)}
-                placeholder="Type field name"
-              />
-            )}
-
-            <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
-              Field posts as a string (Field.Name). Next step: store FieldId on
-              slots.
-            </div>
-          </div>
-
-          <div>
-            <label style={label}>GameType</label>
-            <select
-              style={input}
-              value={gameType}
-              onChange={(e) => setGameType(e.target.value)}
-            >
-              <option value="Swap">Swap</option>
-              <option value="Scrimmage">Scrimmage</option>
-              <option value="Practice">Practice</option>
+          <div className="control">
+            <label>Status filter</label>
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="">(all)</option>
+              {["Open", "Pending", "Confirmed", "Cancelled"].map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
             </select>
           </div>
 
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <label style={label}>Notes</label>
-            <input
-              style={{ ...input, width: "100%" }}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
+          <div className="control control--end">
+            <div className="muted">{slots.length} slot{slots.length === 1 ? "" : "s"}</div>
+          </div>
+        </div>
+
+        {error && <div className="alert alert--danger">{error}</div>}
+      </section>
+
+      {/* Create slot */}
+      <section className="card">
+        <div className="h2">Create slot</div>
+        <div className="formGrid">
+          <div className="control">
+            <label>Division</label>
+            <input value={form.division} onChange={(e) => setFormField("division", e.target.value)} placeholder="Ponytail 4th" />
+          </div>
+          <div className="control">
+            <label>OfferingTeamId</label>
+            <input value={form.offeringTeamId} onChange={(e) => setFormField("offeringTeamId", e.target.value)} placeholder="Blue Waves" />
           </div>
 
-          <button style={button} onClick={createSlot} disabled={loading}>
-            {loading ? "Working..." : "Post"}
-          </button>
+          <div className="control">
+            <label>GameDate (YYYY-MM-DD)</label>
+            <input value={form.gameDate} onChange={(e) => setFormField("gameDate", e.target.value)} placeholder="2026-03-29" />
+          </div>
+          <div className="control">
+            <label>StartTime (HH:mm)</label>
+            <input value={form.startTime} onChange={(e) => setFormField("startTime", e.target.value)} placeholder="08:00" />
+          </div>
+          <div className="control">
+            <label>EndTime (HH:mm)</label>
+            <input value={form.endTime} onChange={(e) => setFormField("endTime", e.target.value)} placeholder="09:15" />
+          </div>
+
+          <div className="control">
+            <label>Park</label>
+            <select value={form.parkName} onChange={(e) => setFormField("parkName", e.target.value)}>
+              <option value="">Select park…</option>
+              {parks.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div className="control">
+            <label>Field</label>
+            <select
+              value={form.fieldName}
+              onChange={(e) => setFormField("fieldName", e.target.value)}
+              disabled={!form.parkName}
+            >
+              <option value="">{form.parkName ? "Select field…" : "Pick a park first…"}</option>
+              {fieldsForPark.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+
+          <div className="control">
+            <label>GameType</label>
+            <input value={form.gameType} onChange={(e) => setFormField("gameType", e.target.value)} placeholder="Swap" />
+          </div>
+
+          <div className="control">
+            <label>Notes</label>
+            <input value={form.notes} onChange={(e) => setFormField("notes", e.target.value)} placeholder="optional" />
+          </div>
+
+          <div className="control">
+            <label>OfferingEmail (optional)</label>
+            <input value={form.offeringEmail} onChange={(e) => setFormField("offeringEmail", e.target.value)} placeholder="coach@example.com" />
+          </div>
+
+          <div className="control control--end">
+            <button className="btn btn--primary" onClick={createSlot} disabled={createBusy}>
+              {createBusy ? "Creating…" : "Create"}
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div style={card}>
-        <h2 style={{ marginTop: 0 }}>Slots</h2>
+        {createMsg && <div className={createMsg === "Created." ? "alert alert--ok" : "alert"}>{createMsg}</div>}
+      </section>
 
-        <table style={table}>
-          <thead>
-            <tr>
-              <th style={th}>SlotId</th>
-              <th style={th}>Team</th>
-              <th style={th}>Date</th>
-              <th style={th}>Time</th>
-              <th style={th}>Field</th>
-              <th style={th}>Type</th>
-              <th style={th}>Status</th>
-              <th style={th}>Actions</th>
-            </tr>
-          </thead>
+      {/* Slots list */}
+      <section className="stack">
+        {slots.map((s) => {
+          const isExpanded = expanded === s.SlotId;
+          const reqs = requests[s.SlotId] || [];
+          const busyReqs = !!requestsBusy[s.SlotId];
 
-          <tbody>
-            {filteredSlots.length === 0 ? (
-              <tr>
-                <td style={td} colSpan={8}>
-                  {loading ? "Loading..." : "No slots found."}
-                </td>
-              </tr>
-            ) : (
-              filteredSlots.map((s) => {
-                const status = String(s.Status || "");
-                const statusLower = status.toLowerCase();
-                const isCancelled = statusLower === "cancelled";
-                const isOpen = statusLower === "open";
+          return (
+            <article key={s.SlotId} className="card">
+              <div className="row row--space">
+                <div className="stack" style={{ gap: 6 }}>
+                  <div className="h3">{slotTitle(s)}</div>
+                  <div className="muted">
+                    <span className="pill">{s.Division}</span>{" "}
+                    <span className="pill">{s.Status || "Open"}</span>{" "}
+                    <span className="pill">Offering: {s.OfferingTeamId}</span>
+                    {s.ConfirmedTeamId ? <span className="pill pill--ok">Confirmed: {s.ConfirmedTeamId}</span> : null}
+                  </div>
+                </div>
 
-                return (
-                  <tr key={s.SlotId}>
-                    <td style={td}>
-                      <code>{s.SlotId}</code>
-                    </td>
-                    <td style={td}>{s.OfferingTeamId}</td>
-                    <td style={td}>{s.GameDate}</td>
-                    <td style={td}>
-                      {s.StartTime}–{s.EndTime}
-                    </td>
-                    <td style={td}>{s.Field}</td>
-                    <td style={td}>{s.GameType}</td>
-                    <td style={td}>{statusPill(status)}</td>
-                    <td style={td}>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button
-                          style={buttonSecondary}
-                          onClick={() => requestSlot(s)}
-                          disabled={loading || !isOpen}
-                          title="Request this slot (creates a pending request)"
-                        >
-                          Request
-                        </button>
+                <div className="row row--end">
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      const next = isExpanded ? "" : s.SlotId;
+                      setExpanded(next);
+                      setRequestMsg("");
+                      if (!isExpanded) loadRequests(s);
+                    }}
+                  >
+                    {isExpanded ? "Hide requests" : "Requests"}
+                  </button>
 
-                        <button
-                          style={buttonSecondary}
-                          onClick={() => cancelSlot(s)}
-                          disabled={loading || isCancelled}
-                          title="Cancel slot"
-                        >
-                          Cancel
+                  <button className="btn btn--danger" onClick={() => cancelSlot(s)} disabled={String(s.Status).toLowerCase() === "cancelled"}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div className="stack">
+                  <div className="divider" />
+
+                  {/* Request this slot */}
+                  <div className="card card--subtle">
+                    <div className="h3">Request this slot</div>
+                    <div className="formGrid">
+                      <div className="control">
+                        <label>RequestingTeamId</label>
+                        <input value={requestingTeamId} onChange={(e) => setRequestingTeamId(e.target.value)} placeholder="Your team" />
+                      </div>
+                      <div className="control">
+                        <label>Message (optional)</label>
+                        <input value={requestMessage} onChange={(e) => setRequestMessage(e.target.value)} placeholder="Any details…" />
+                      </div>
+                      <div className="control control--end">
+                        <button className="btn btn--primary" onClick={() => submitRequest(s)} disabled={requestBusy}>
+                          {requestBusy ? "Submitting…" : "Submit request"}
                         </button>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                    </div>
+                    {requestMsg && <div className={requestMsg.endsWith(".") ? "alert alert--ok" : "alert"}>{requestMsg}</div>}
+                  </div>
 
-        <div style={{ marginTop: 10, color: "#666", fontSize: 12 }}>
-          Request posts to <code>{REQUEST_ROUTE("Division", "SlotId")}</code>. Admin approval happens via
-          <code> /api/slots/&lt;division&gt;/&lt;slotId&gt;/requests/&lt;requestId&gt;/approve</code>.
-        </div>
-      </div>
+                  {/* Requests table */}
+                  <div className="row row--space">
+                    <div className="h3">Requests</div>
+                    <button className="btn btn--sm" onClick={() => loadRequests(s)} disabled={busyReqs}>
+                      {busyReqs ? "Loading…" : "Refresh requests"}
+                    </button>
+                  </div>
+
+                  <div className="tableWrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Team</th>
+                          <th>Status</th>
+                          <th>Message</th>
+                          <th>Requested</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reqs.map((r) => (
+                          <tr key={r.RequestId}>
+                            <td>{r.RequestingTeamId}</td>
+                            <td>{r.Status}</td>
+                            <td className="muted">{r.Message}</td>
+                            <td className="muted">{r.RequestedAtUtc ? new Date(r.RequestedAtUtc).toLocaleString() : ""}</td>
+                            <td className="row row--end">
+                              <button
+                                className="btn btn--sm btn--primary"
+                                onClick={() => approveRequest(s, r)}
+                                disabled={String(s.Status).toLowerCase() === "confirmed" || String(r.Status).toLowerCase() === "approved"}
+                              >
+                                Approve
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {reqs.length === 0 && (
+                          <tr><td colSpan={5} className="muted">No requests yet.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
+
+        {slots.length === 0 && !loading && (
+          <div className="card">
+            <div className="muted">No slots found for the current filters.</div>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
