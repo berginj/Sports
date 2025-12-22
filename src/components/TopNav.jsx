@@ -1,13 +1,26 @@
 import { persistLeagueId } from "../lib/useSession";
 
 export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
-  // API returns `memberships` (camelCase), each item has `leagueId` + `role`
-  const memberships = Array.isArray(me?.memberships) ? me.memberships : [];
-  const email = me?.email || "";
+  // Be tolerant: API may return different casing depending on build/version.
+  const membershipsRaw =
+    (Array.isArray(me?.memberships) && me.memberships) ||
+    (Array.isArray(me?.Memberships) && me.Memberships) ||
+    [];
+
+  const memberships = membershipsRaw
+    .map((m) => ({
+      leagueId: String(m?.leagueId ?? m?.LeagueId ?? "").trim(),
+      role: String(m?.role ?? m?.Role ?? "").trim(),
+      leagueName: String(m?.leagueName ?? m?.LeagueName ?? "").trim(),
+    }))
+    .filter((m) => m.leagueId);
+
+  const email = String(me?.email ?? me?.Email ?? "").trim();
 
   function pickLeague(id) {
-    setLeagueId(id);
-    persistLeagueId(id);
+    const v = String(id || "").trim();
+    setLeagueId(v);
+    persistLeagueId(v);
   }
 
   return (
@@ -21,22 +34,27 @@ export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
         <div className="topnav__controls">
           <div className="control">
             <label>League</label>
-            <select value={leagueId || ""} onChange={(e) => pickLeague(e.target.value)}>
-              {memberships.length === 0 ? (
-                <option value="" disabled>
-                  No leagues
-                </option>
-              ) : (
-                memberships.map((m) => {
-                  const id = (m?.leagueId || "").trim();
-                  const role = (m?.role || "").trim();
-                  return (
-                    <option key={id || Math.random()} value={id}>
-                      {role ? `${id} (${role})` : id}
-                    </option>
-                  );
-                })
-              )}
+            <select
+              value={leagueId || ""}
+              onChange={(e) => pickLeague(e.target.value)}
+              disabled={memberships.length === 0}
+            >
+              {/* Always provide an empty option for the initial render */}
+              <option value="">
+                {memberships.length === 0 ? "No leagues" : "Select a league…"}
+              </option>
+
+              {memberships.map((m) => {
+                const label = m.leagueName
+                  ? `${m.leagueName} (${m.leagueId})${m.role ? ` • ${m.role}` : ""}`
+                  : `${m.leagueId}${m.role ? ` (${m.role})` : ""}`;
+
+                return (
+                  <option key={m.leagueId} value={m.leagueId}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -44,18 +62,21 @@ export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
             <button
               className={tab === "offers" ? "tab tab--active" : "tab"}
               onClick={() => setTab("offers")}
+              type="button"
             >
               Offers
             </button>
             <button
               className={tab === "manage" ? "tab tab--active" : "tab"}
               onClick={() => setTab("manage")}
+              type="button"
             >
               Manage
             </button>
             <button
               className={tab === "help" ? "tab tab--active" : "tab"}
               onClick={() => setTab("help")}
+              type="button"
             >
               Help
             </button>
