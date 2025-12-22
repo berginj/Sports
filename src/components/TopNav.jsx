@@ -1,8 +1,9 @@
 import { persistLeagueId } from "../lib/useSession";
 
 export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
-  const memberships = Array.isArray(me?.Memberships) ? me.Memberships : [];
-  const email = me?.Email || me?.email || "";
+  // API returns `memberships` (camelCase), each item has `leagueId` + `role`
+  const memberships = Array.isArray(me?.memberships) ? me.memberships : [];
+  const email = me?.email || "";
 
   function pickLeague(id) {
     setLeagueId(id);
@@ -21,22 +22,41 @@ export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
           <div className="control">
             <label>League</label>
             <select value={leagueId || ""} onChange={(e) => pickLeague(e.target.value)}>
-              {memberships.map((m) => (
-                <option key={m.LeagueId} value={m.LeagueId}>
-                  {m.LeagueName ? `${m.LeagueName} (${m.LeagueId})` : m.LeagueId}
+              {memberships.length === 0 ? (
+                <option value="" disabled>
+                  No leagues
                 </option>
-              ))}
+              ) : (
+                memberships.map((m) => {
+                  const id = (m?.leagueId || "").trim();
+                  const role = (m?.role || "").trim();
+                  return (
+                    <option key={id || Math.random()} value={id}>
+                      {role ? `${id} (${role})` : id}
+                    </option>
+                  );
+                })
+              )}
             </select>
           </div>
 
           <nav className="tabs" aria-label="Primary">
-            <button className={tab === "offers" ? "tab tab--active" : "tab"} onClick={() => setTab("offers")}>
+            <button
+              className={tab === "offers" ? "tab tab--active" : "tab"}
+              onClick={() => setTab("offers")}
+            >
               Offers
             </button>
-            <button className={tab === "manage" ? "tab tab--active" : "tab"} onClick={() => setTab("manage")}>
+            <button
+              className={tab === "manage" ? "tab tab--active" : "tab"}
+              onClick={() => setTab("manage")}
+            >
               Manage
             </button>
-            <button className={tab === "help" ? "tab tab--active" : "tab"} onClick={() => setTab("help")}>
+            <button
+              className={tab === "help" ? "tab tab--active" : "tab"}
+              onClick={() => setTab("help")}
+            >
               Help
             </button>
           </nav>

@@ -18,7 +18,7 @@ export default function App() {
   if (loading) return <div className="page"><div className="card">Loading session…</div></div>;
   if (error) return <div className="page"><div className="card card--danger">Session error: {error}</div></div>;
 
-  const memberships = me?.Memberships || [];
+  const memberships = me?.memberships || [];
   if (!memberships.length) {
     return (
       <div className="page">

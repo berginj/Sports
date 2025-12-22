@@ -6,8 +6,8 @@ import { apiFetch } from "./api";
  * Endpoint: GET /api/me  (GetMe.cs)
  *
  * Note:
- * - When EasyAuth isn't fully wired, IdentityUtil will fall back to x-user-id / x-user-email headers.
- * - That means you may see UNKNOWN locally until you pass those headers or enable EasyAuth.
+ * - /api/me returns memberships[] even when leagueId header isn't provided.
+ * - To compute isMember/role, the API needs x-league-id (or ?leagueId=...).
  */
 export function useSession() {
   const [me, setMe] = useState(null);
@@ -20,8 +20,21 @@ export function useSession() {
     async function load() {
       setLoading(true);
       setError("");
+
       try {
-        const data = await apiFetch("/api/me", { method: "GET" });
+        // First call: get identity + memberships (no league header required)
+        const base = await apiFetch("/api/me", { method: "GET" });
+        if (cancelled) return;
+
+        // Choose a league (stored first, otherwise first membership)
+        const initialLeagueId = getInitialLeagueId(base);
+
+        // If we have a league, call /api/me again with x-league-id so API can set isMember/role
+        const data =
+          initialLeagueId
+            ? await apiFetch("/api/me", { method: "GET", leagueId: initialLeagueId })
+            : base;
+
         if (!cancelled) setMe(data);
       } catch (e) {
         if (!cancelled) setError(String(e?.message || e));
@@ -41,10 +54,10 @@ const LS_KEY = "gameswap.activeLeagueId";
 
 export function getInitialLeagueId(me) {
   const stored = window.localStorage.getItem(LS_KEY) || "";
-  const memberships = Array.isArray(me?.Memberships) ? me.Memberships : [];
+  const memberships = Array.isArray(me?.memberships) ? me.memberships : [];
 
-  if (stored && memberships.some((m) => m?.LeagueId === stored)) return stored;
-  return memberships[0]?.LeagueId || "";
+  if (stored && memberships.some((m) => m?.leagueId === stored)) return stored;
+  return memberships[0]?.leagueId || "";
 }
 
 export function persistLeagueId(leagueId) {
