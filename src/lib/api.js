@@ -1,99 +1,54 @@
 // src/lib/api.js
 
-function getActiveLeagueId() {
-  // Keep the existing key for backward compatibility
-  return (localStorage.getItem("activeLeagueId") || "").trim();
-}
-
-function normalizeUrl(path) {
-  // Accept absolute URLs
-  if (/^https?:\/\//i.test(path)) return path;
-
-  // Callers sometimes pass "/api/..." and sometimes "/..."
-  if (path.startsWith("/api/")) return path;
-  if (path.startsWith("/")) return `/api${path}`;
-  return `/api/${path}`;
-}
-
-async function safeReadText(resp) {
-  try {
-    return await resp.text();
-  } catch {
-    return "";
-  }
-}
-
-async function safeJson(resp) {
-  const txt = await safeReadText(resp);
-  if (!txt) return null;
-  try {
-    return JSON.parse(txt);
-  } catch {
-    return null;
-  }
-}
-
 /**
- * apiFetch(path, options?)
- * - Automatically attaches x-league-id from localStorage("activeLeagueId") unless overridden.
- * - Supports callers passing "/api/..." OR "/...".
+ * PROD (Azure Static Web Apps): use relative /api so SWA proxies to linked Function App.
+ * DEV: allow overriding to call a direct Function App host.
  */
+export function apiBase() {
+  if (import.meta.env.DEV) {
+    const b = import.meta.env.VITE_API_BASE_URL;
+    return b && b.trim() ? b.trim().replace(/\/+$/, "") : "";
+  }
+  return "";
+}
+
 export async function apiFetch(path, options = {}) {
-  const url = normalizeUrl(path);
+  const base = apiBase();
+  const url = base ? `${base}${path}` : path;
 
-  const {
-    method = "GET",
-    headers = {},
-    body = undefined,
-    leagueId = undefined, // optional override
-    signal = undefined,
-  } = options;
+  const headers = new Headers(options.headers || {});
 
-  const activeLeagueId = (leagueId ?? getActiveLeagueId()).trim();
-
-  const finalHeaders = {
-    Accept: "application/json",
-    ...headers,
-  };
-
-  // Attach league scope automatically when available
-  if (activeLeagueId) {
-    finalHeaders["x-league-id"] = activeLeagueId;
+  // Always attach active league id (multi-tenant context)
+  const leagueId = localStorage.getItem("activeLeagueId");
+  if (leagueId && !headers.has("x-league-id")) {
+    headers.set("x-league-id", leagueId);
   }
 
-  let finalBody = body;
-
-  // If body is a plain object, send JSON
-  const isPlainObject =
-    body &&
-    typeof body === "object" &&
-    !(body instanceof FormData) &&
-    !(body instanceof Blob) &&
-    !(body instanceof ArrayBuffer);
-
-  if (isPlainObject) {
-    finalHeaders["Content-Type"] = "application/json";
-    finalBody = JSON.stringify(body);
+  if (options.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
 
-  const resp = await fetch(url, {
-    method,
-    headers: finalHeaders,
-    body: finalBody,
-    signal,
+  const res = await fetch(url, {
+    ...options,
+    headers,
+    credentials: "include", // REQUIRED for EasyAuth / SWA auth cookies
   });
 
-  if (!resp.ok) {
-    const data = await safeJson(resp);
-    const msg =
-      data?.error ||
-      data?.message ||
-      (await safeReadText(resp)) ||
-      `${resp.status} ${resp.statusText}`;
-    throw new Error(msg);
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
   }
 
-  // Some endpoints may legitimately return empty
-  const data = await safeJson(resp);
-  return data ?? {};
+  if (!res.ok) {
+    const msg =
+      typeof data === "string" && data
+        ? data
+        : data?.error || data?.message || res.statusText;
+    throw new Error(`${res.status} ${msg}`);
+  }
+
+  return data;
 }

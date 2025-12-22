@@ -1,44 +1,32 @@
-// src/lib/useSession.js
-import { useEffect, useState } from "react";
-import { apiFetch } from "./api";
+import { useEffect, useMemo, useState } from "react";
 
-const STORAGE_KEY = "activeLeagueId";
+// Local storage key for the last selected league.
+const LS_LEAGUE = "gameswap_leagueId";
 
 export function persistLeagueId(leagueId) {
-  const id = (leagueId || "").trim();
-  if (id) localStorage.setItem(STORAGE_KEY, id);
-  else localStorage.removeItem(STORAGE_KEY);
-}
-
-function readPersistedLeagueId() {
-  return (localStorage.getItem(STORAGE_KEY) || "").trim();
-}
-
-function normalizeMemberships(me) {
-  // Support both shapes, but prefer camelCase going forward.
-  const m =
-    (Array.isArray(me?.memberships) && me.memberships) ||
-    (Array.isArray(me?.Memberships) && me.Memberships) ||
-    [];
-
-  // Normalize each entry to { leagueId, role }
-  return m
-    .map((x) => ({
-      leagueId: (x?.leagueId ?? x?.LeagueId ?? "").trim(),
-      role: (x?.role ?? x?.Role ?? "").trim(),
-    }))
-    .filter((x) => x.leagueId);
+  try {
+    if (!leagueId) {
+      localStorage.removeItem(LS_LEAGUE);
+    } else {
+      localStorage.setItem(LS_LEAGUE, leagueId);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 export function getInitialLeagueId(me) {
-  const memberships = normalizeMemberships(me);
+  // 1) Persisted value
+  try {
+    const saved = (localStorage.getItem(LS_LEAGUE) || "").trim();
+    if (saved) return saved;
+  } catch {
+    // ignore
+  }
 
-  const saved = readPersistedLeagueId();
-  if (saved && memberships.some((m) => m.leagueId === saved)) return saved;
-
-  const first = memberships[0]?.leagueId || "";
-  if (first) persistLeagueId(first);
-  return first;
+  // 2) First membership, if any
+  const memberships = Array.isArray(me?.memberships) ? me.memberships : [];
+  return (memberships[0]?.leagueId || "").trim();
 }
 
 export function useSession() {
@@ -47,31 +35,65 @@ export function useSession() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError("");
       try {
-        setLoading(true);
-        setError("");
-        const data = await apiFetch("/api/me", { method: "GET" });
-
-        // Normalize into camelCase for the UI
-        const memberships = normalizeMemberships(data);
-        const normalized = {
-          userId: data?.userId ?? data?.UserId ?? "",
-          email: data?.email ?? data?.Email ?? "",
-          leagueId: data?.leagueId ?? data?.LeagueId ?? "",
-          isMember: !!(data?.isMember ?? data?.IsMember),
-          role: data?.role ?? data?.Role ?? "",
-          memberships,
-        };
-
-        setMe(normalized);
+        const res = await fetch("/api/me", { credentials: "include" });
+        const text = await res.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          data = null;
+        }
+        if (!res.ok) throw new Error(data?.error || `Failed to load /api/me (${res.status})`);
+        if (!cancelled) setMe(data || {});
       } catch (e) {
-        setError(String(e?.message || e));
+        if (!cancelled) setError(e?.message || "Failed to load session");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    })();
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  return { me, loading, error };
+  const memberships = useMemo(() => (Array.isArray(me?.memberships) ? me.memberships : []), [me]);
+  const hasMemberships = memberships.length > 0;
+  const isGlobalAdmin = !!me?.isGlobalAdmin;
+
+  const [leagueId, setLeagueId] = useState("");
+
+  // Pick an initial leagueId once `me` loads.
+  useEffect(() => {
+    if (!me) return;
+    const initial = getInitialLeagueId(me);
+    if (initial && !leagueId) setLeagueId(initial);
+  }, [me]); // intentionally omit leagueId
+
+  // Persist league changes
+  useEffect(() => {
+    if (leagueId) persistLeagueId(leagueId);
+  }, [leagueId]);
+
+  return {
+    me: me || {},
+    memberships,
+    hasMemberships,
+    isGlobalAdmin,
+    leagueId,
+    setLeagueId,
+    loading,
+    error,
+    refreshMe: async () => {
+      const res = await fetch("/api/me", { credentials: "include" });
+      const data = await res.json();
+      setMe(data || {});
+      return data;
+    },
+  };
 }
