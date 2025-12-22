@@ -1,62 +1,123 @@
-/**
- * API helper for GameSwap (SWA + Functions).
- *
- * - PROD (Azure Static Web Apps): always use relative /api so SWA proxies to linked Function App.
- * - DEV (vite): allow VITE_API_BASE_URL to call a direct Function App host.
- *
- * League-scoped endpoints REQUIRE x-league-id. Pass { leagueId } to apiFetch().
- */
-function apiBase() {
-  if (import.meta.env.DEV) {
-    const b = import.meta.env.VITE_API_BASE_URL;
-    return b && b.trim() ? b.trim().replace(/\/+$/, "") : "";
+// src/lib/api.js
+// Single fetch helper for the UI. Always prefers an explicit leagueId, otherwise falls back
+// to localStorage("activeLeagueId"). Attaches x-league-id when available.
+
+async function readTextSafely(resp) {
+  try {
+    return await resp.text();
+  } catch {
+    return "";
   }
-  return "";
 }
 
-function buildUrl(path, query) {
-  const base = apiBase();
-  const url = base ? `${base}${path}` : path;
-
-  if (!query || Object.keys(query).length === 0) return url;
-
-  const u = new URL(url, window.location.origin);
-  for (const [k, v] of Object.entries(query)) {
-    if (v === undefined || v === null || v === "") continue;
-    u.searchParams.set(k, String(v));
-  }
-  // keep relative if we started relative
-  return base ? u.toString() : u.pathname + u.search;
-}
-
-async function parseBody(res) {
-  const text = await res.text();
+function parseJsonOrNull(text) {
   if (!text) return null;
-  try { return JSON.parse(text); } catch { return text; }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
-export async function apiFetch(path, { method = "GET", body, headers, leagueId, query } = {}) {
-  const url = buildUrl(path, query);
+function normalizePath(path) {
+  // Allow callers to pass "/api/..." or "api/..." or "/..."
+  if (!path) return "/api/ping";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (path.startsWith("/api/")) return path;
+  if (path.startsWith("api/")) return `/${path}`;
+  if (path.startsWith("/")) return `/api${path}`;
+  return `/api/${path}`;
+}
 
-  const h = new Headers(headers || {});
-  if (leagueId) h.set("x-league-id", leagueId);
-  if (body !== undefined && body !== null && !h.has("Content-Type")) h.set("Content-Type", "application/json");
+function getStoredLeagueId() {
+  return (localStorage.getItem("activeLeagueId") || "").trim();
+}
 
-  const res = await fetch(url, { method, headers: h, body: body !== undefined && body !== null ? body : undefined });
+export async function apiFetch(path, options = {}) {
+  const url = normalizePath(path);
 
-  const data = await parseBody(res);
+  const {
+    leagueId: explicitLeagueId,
+    headers: userHeaders,
+    // common fetch options:
+    method,
+    body,
+    signal,
+    credentials,
+    cache,
+    redirect,
+    referrerPolicy,
+    mode,
+    // allow pass-through for anything else
+    ...rest
+  } = options;
 
-  if (!res.ok) {
-    const msg =
-      typeof data === "string" && data
-        ? data
-        : data?.error || data?.message || res.statusText || "Request failed";
-    throw new Error(`${res.status} ${msg}`);
+  const leagueId = (explicitLeagueId ?? getStoredLeagueId()).trim();
+
+  const headers = new Headers(userHeaders || {});
+  // Always attach league header when we have it
+  if (leagueId) headers.set("x-league-id", leagueId);
+
+  // If body is a plain object, send JSON by default
+  let finalBody = body;
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+  const isBlob = typeof Blob !== "undefined" && body instanceof Blob;
+  const isString = typeof body === "string";
+
+  if (body != null && !isFormData && !isBlob && !isString && typeof body === "object") {
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json; charset=utf-8");
+    finalBody = JSON.stringify(body);
   }
 
-  return data;
+  const resp = await fetch(url, {
+    method: method ?? (finalBody ? "POST" : "GET"),
+    headers,
+    body: finalBody,
+    signal,
+    credentials,
+    cache,
+    redirect,
+    referrerPolicy,
+    mode,
+    ...rest,
+  });
+
+  // Success: try to return JSON; otherwise return raw text
+  if (resp.ok) {
+    const contentType = resp.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      try {
+        return await resp.json();
+      } catch {
+        // fall through to text
+      }
+    }
+    return await readTextSafely(resp);
+  }
+
+  // Error: build a useful error object
+  const text = await readTextSafely(resp);
+  const maybeJson = parseJsonOrNull(text);
+
+  const err = new Error(
+    maybeJson?.error ||
+      maybeJson?.message ||
+      text ||
+      `Request failed (${resp.status})`
+  );
+
+  err.status = resp.status;
+  err.url = url;
+  err.body = maybeJson ?? text;
+
+  throw err;
 }
 
-export function getApiBaseLabel() {
-  return apiBase() || "(relative /api — SWA integrated API)";
-}
+// Convenience wrappers (optional, but handy)
+export const api = {
+  get: (path, opts = {}) => apiFetch(path, { ...opts, method: "GET" }),
+  post: (path, body, opts = {}) => apiFetch(path, { ...opts, method: "POST", body }),
+  put: (path, body, opts = {}) => apiFetch(path, { ...opts, method: "PUT", body }),
+  patch: (path, body, opts = {}) => apiFetch(path, { ...opts, method: "PATCH", body }),
+  del: (path, opts = {}) => apiFetch(path, { ...opts, method: "DELETE" }),
+};
