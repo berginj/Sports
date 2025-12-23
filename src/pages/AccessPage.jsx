@@ -1,19 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
+import { LEAGUE_HEADER_NAME } from "../lib/constants";
 
 const ROLE_OPTIONS = [
-  { value: "LeagueAdmin", label: "League admin" },
-  { value: "Scheduler", label: "Scheduler" },
-  { value: "Commissioner", label: "Commissioner" },
   { value: "Coach", label: "Coach" },
-  { value: "Parent", label: "Parent" },
   { value: "Viewer", label: "Read-only viewer" },
 ];
 
 export default function AccessPage({ me, leagueId, setLeagueId }) {
   const [leagues, setLeagues] = useState([]);
   const [role, setRole] = useState("Coach");
-  const [message, setMessage] = useState("");
+  const [notes, setNotes] = useState("");
   const [mine, setMine] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -32,7 +29,7 @@ export default function AccessPage({ me, leagueId, setLeagueId }) {
     setErr("");
     try {
       const [ls, my] = await Promise.all([
-        apiFetch("/api/leagues/public"),
+        apiFetch("/api/leagues"),
         signedIn ? apiFetch("/api/accessrequests/mine") : Promise.resolve([]),
       ]);
       setLeagues(Array.isArray(ls) ? ls : []);
@@ -70,11 +67,11 @@ export default function AccessPage({ me, leagueId, setLeagueId }) {
     try {
       await apiFetch("/api/accessrequests", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leagueId: id, requestedRole: role, message }),
+        headers: { "Content-Type": "application/json", [LEAGUE_HEADER_NAME]: id },
+        body: JSON.stringify({ requestedRole: role, notes }),
       });
       setOk("Request submitted. An admin will review it.");
-      setMessage("");
+      setNotes("");
       await refresh();
     } catch (e) {
       setErr(e?.message || "Request failed.");
@@ -132,8 +129,8 @@ export default function AccessPage({ me, leagueId, setLeagueId }) {
           <label>
             Message (optional)
             <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
               placeholder="Tell the admin who you are and why you need access."
               rows={4}
             />

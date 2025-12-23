@@ -47,14 +47,14 @@ export default function ManagePage({ leagueId, me }) {
         <div className="card">
           <div className="card__header">
             <div className="h2">Fields</div>
-            <div className="subtle">Bulk upsert fields via JSON (stored in the normalized <code>Fields</code> table).</div>
+            <div className="subtle">Import fields via CSV (the only supported fields workflow).</div>
           </div>
           <div className="card__body">
             <div className="callout">
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>Field normalization rules</div>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>CSV rules</div>
               <div className="subtle" style={{ lineHeight: 1.45 }}>
-                Use <b>ParkName</b> + <b>FieldName</b> + <b>DisplayName</b>. DisplayName should be what you want coaches to see.
-                Keep it consistent (example: <code>Tuckahoe Park &gt; Field 2</code>). Avoid legacy field properties.
+                CSV must include <b>fieldKey</b> + <b>parkName</b> + <b>fieldName</b> (and optionally displayName, address, notes, status). DisplayName should be what you want coaches to see.
+                Keep it consistent (example: <code>Tuckahoe Park &gt; Field 2</code>). fieldKey is stable and is how slots reference a field.
               </div>
             </div>
             <div className="tableWrap" style={{ marginTop: 12 }}>
@@ -85,7 +85,7 @@ export default function ManagePage({ leagueId, me }) {
           <div className="card__body" style={{ lineHeight: 1.5 }}>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               <li>
-                <b>League selection persists</b> via <code>activeLeagueId</code> in localStorage. Every API call sends <code>x-league-id</code>.
+                <b>League selection persists</b> via <code>gameswap_leagueId</code> in localStorage. Every API call sends <code>x-league-id</code>.
               </li>
               <li>
                 If the UI says <b>No league access</b>, add a row in <code>GameSwapMemberships</code> for your UserId + LeagueId.

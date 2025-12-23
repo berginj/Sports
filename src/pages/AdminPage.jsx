@@ -3,19 +3,19 @@ import { apiFetch } from "../lib/api";
 
 const ROLE_OPTIONS = [
   "LeagueAdmin",
-  "Scheduler",
-  "Commissioner",
   "Coach",
-  "Parent",
   "Viewer",
-  "Umpire",
 ];
 
 export default function AdminPage({ me }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [leagueFilter, setLeagueFilter] = useState("");
   const [items, setItems] = useState([]);
+  const [memLoading, setMemLoading] = useState(false);
+  const [memberships, setMemberships] = useState([]);
+  const [divisions, setDivisions] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [coachDraft, setCoachDraft] = useState({});
 
   async function load() {
     setLoading(true);
@@ -23,8 +23,7 @@ export default function AdminPage({ me }) {
     try {
       const qs = new URLSearchParams();
       qs.set("status", "Pending");
-      if (leagueFilter.trim()) qs.set("leagueId", leagueFilter.trim());
-      const data = await apiFetch(`/api/admin/accessrequests?${qs.toString()}`);
+      const data = await apiFetch(`/api/accessrequests?${qs.toString()}`);
       setItems(Array.isArray(data) ? data : []);
     } catch (e) {
       setErr(e?.message || "Failed to load pending requests");
@@ -34,19 +33,52 @@ export default function AdminPage({ me }) {
     }
   }
 
+  async function loadMembershipsAndTeams() {
+    setMemLoading(true);
+    try {
+      const [m, d, t] = await Promise.all([
+        apiFetch(`/api/memberships`),
+        apiFetch(`/api/divisions`),
+        apiFetch(`/api/teams`),
+      ]);
+      const mems = Array.isArray(m) ? m : [];
+      setMemberships(mems);
+      setDivisions(Array.isArray(d) ? d : []);
+      setTeams(Array.isArray(t) ? t : []);
+
+      // initialize draft assignments from current server state
+      const draft = {};
+      for (const mm of mems) {
+        if ((mm.role || "").toLowerCase() !== "coach") continue;
+        draft[mm.userId] = {
+          division: mm.team?.division || "",
+          teamId: mm.team?.teamId || "",
+        };
+      }
+      setCoachDraft(draft);
+    } catch (e) {
+      alert(e?.message || "Failed to load memberships/teams");
+      setMemberships([]);
+      setDivisions([]);
+      setTeams([]);
+    } finally {
+      setMemLoading(false);
+    }
+  }
+
   useEffect(() => {
     load();
+    loadMembershipsAndTeams();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leagueFilter]);
+  }, []);
 
   async function approve(req, roleOverride) {
-    const leagueId = req?.leagueId || "";
     const userId = req?.userId || "";
     const role = (roleOverride || req?.requestedRole || "Viewer").trim();
-    if (!leagueId || !userId) return;
+    if (!userId) return;
     try {
-      await apiFetch(`/api/admin/accessrequests/${encodeURIComponent(leagueId)}/${encodeURIComponent(userId)}/approve`, {
-        method: "POST",
+      await apiFetch(`/api/accessrequests/${encodeURIComponent(userId)}/approve`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role }),
       });
@@ -57,13 +89,12 @@ export default function AdminPage({ me }) {
   }
 
   async function deny(req) {
-    const leagueId = req?.leagueId || "";
     const userId = req?.userId || "";
-    if (!leagueId || !userId) return;
+    if (!userId) return;
     const reason = prompt("Reason for denial? (optional)") || "";
     try {
-      await apiFetch(`/api/admin/accessrequests/${encodeURIComponent(leagueId)}/${encodeURIComponent(userId)}/deny`, {
-        method: "POST",
+      await apiFetch(`/api/accessrequests/${encodeURIComponent(userId)}/deny`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason }),
       });
@@ -74,31 +105,71 @@ export default function AdminPage({ me }) {
   }
 
   const sorted = useMemo(() => {
-    return [...items].sort((a, b) => {
-      const la = (a.leagueId || "").localeCompare(b.leagueId || "");
-      if (la !== 0) return la;
-      return (a.requestedAtUtc || "").localeCompare(b.requestedAtUtc || "");
-    });
+    return [...items].sort((a, b) => (b.updatedUtc || "").localeCompare(a.updatedUtc || ""));
   }, [items]);
+
+  const coaches = useMemo(() => {
+    return (memberships || []).filter((m) => (m.role || "").toLowerCase() === "coach");
+  }, [memberships]);
+
+  const teamsByDivision = useMemo(() => {
+    const map = new Map();
+    for (const t of teams || []) {
+      const div = (t.division || "").trim();
+      if (!div) continue;
+      if (!map.has(div)) map.set(div, []);
+      map.get(div).push(t);
+    }
+    for (const [k, v] of map.entries()) {
+      v.sort((a, b) => (a.name || a.teamId || "").localeCompare(b.name || b.teamId || ""));
+      map.set(k, v);
+    }
+    return map;
+  }, [teams]);
+
+  function setDraftForCoach(userId, patch) {
+    setCoachDraft((prev) => {
+      const cur = prev[userId] || { division: "", teamId: "" };
+      return { ...prev, [userId]: { ...cur, ...patch } };
+    });
+  }
+
+  async function saveCoachAssignment(userId) {
+    const draft = coachDraft[userId] || { division: "", teamId: "" };
+    const division = (draft.division || "").trim();
+    const teamId = (draft.teamId || "").trim();
+    const body = division && teamId ? { team: { division, teamId } } : { team: null };
+
+    try {
+      await apiFetch(`/api/memberships/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      await loadMembershipsAndTeams();
+    } catch (e) {
+      alert(e?.message || "Failed to update coach assignment");
+    }
+  }
+
+  async function clearCoachAssignment(userId) {
+    setDraftForCoach(userId, { division: "", teamId: "" });
+    await saveCoachAssignment(userId);
+  }
 
   return (
     <div className="card">
       <h2>Admin: access requests</h2>
       <p className="muted">
-        You are a <strong>global admin</strong>. You can approve/deny access requests for any league.
+        Approve or deny access requests for the currently selected league.
       </p>
 
       <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
-        <label className="field">
-          <span>Filter by LeagueId</span>
-          <input
-            value={leagueFilter}
-            placeholder="(optional)"
-            onChange={(e) => setLeagueFilter(e.target.value)}
-          />
-        </label>
         <button className="btn" onClick={load} disabled={loading}>
           Refresh
+        </button>
+        <button className="btn" onClick={loadMembershipsAndTeams} disabled={memLoading}>
+          Refresh members/teams
         </button>
       </div>
 
@@ -112,17 +183,15 @@ export default function AdminPage({ me }) {
           <table className="table">
             <thead>
               <tr>
-                <th>League</th>
                 <th>User</th>
                 <th>Requested role</th>
-                <th>Message</th>
+                <th>Notes</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((r) => (
-                <tr key={`${r.leagueId}|${r.userId}`}>
-                  <td>{r.leagueId}</td>
+                <tr key={r.userId}>
                   <td>
                     <div style={{ fontWeight: 600 }}>{r.email || r.userId}</div>
                     <div className="muted" style={{ fontSize: 12 }}>{r.userId}</div>
@@ -139,10 +208,10 @@ export default function AdminPage({ me }) {
                         </option>
                       ))}
                     </select>
-                    <div className="muted" style={{ fontSize: 12 }}>{r.requestedAtUtc}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>{r.updatedUtc || r.createdUtc || ""}</div>
                   </td>
                   <td style={{ maxWidth: 320 }}>
-                    <div style={{ whiteSpace: "pre-wrap" }}>{r.message || ""}</div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{r.notes || ""}</div>
                   </td>
                   <td>
                     <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -164,17 +233,102 @@ export default function AdminPage({ me }) {
       <details style={{ marginTop: 16 }}>
         <summary>Notes</summary>
         <ul>
-          <li>
-            Approving creates a row in <code>GameSwapMemberships</code> and marks the request as Approved.
-          </li>
-          <li>
-            Denying marks the request as Denied.
-          </li>
-          <li>
-            All actions are written to <code>GameSwapAuditLog</code>.
-          </li>
+          <li>Approving creates (or updates) a membership record for this league and marks the request Approved.</li>
+          <li>Deny marks the request Denied.</li>
         </ul>
       </details>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Coach assignments</h3>
+        <p className="muted">
+          Coaches can be approved without a team. Assign teams here when you’re ready.
+        </p>
+
+        {memLoading ? (
+          <div className="muted">Loading memberships…</div>
+        ) : coaches.length === 0 ? (
+          <div className="muted">No coaches in this league yet.</div>
+        ) : (
+          <div className="tableWrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Coach</th>
+                  <th>Division</th>
+                  <th>Team</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coaches.map((c) => {
+                  const draft = coachDraft[c.userId] || { division: c.team?.division || "", teamId: c.team?.teamId || "" };
+                  const currentDiv = draft.division || "";
+                  const currentTeam = draft.teamId || "";
+                  const divOptions = (divisions || [])
+                    .map((d) => (typeof d === "string" ? d : d.code || d.division || ""))
+                    .filter(Boolean);
+                  const teamsForDiv = currentDiv ? (teamsByDivision.get(currentDiv) || []) : [];
+
+                  return (
+                    <tr key={c.userId}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{c.email || c.userId}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{c.userId}</div>
+                      </td>
+                      <td>
+                        <select
+                          value={currentDiv}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setDraftForCoach(c.userId, { division: v, teamId: "" });
+                          }}
+                          title="Set division (clears team until you select one)"
+                        >
+                          <option value="">(unassigned)</option>
+                          {divOptions.map((d) => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          value={currentTeam}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setDraftForCoach(c.userId, { division: currentDiv, teamId: v });
+                          }}
+                          disabled={!currentDiv}
+                          title={!currentDiv ? "Pick a division first" : "Pick a team"}
+                        >
+                          <option value="">(unassigned)</option>
+                          {teamsForDiv.map((t) => (
+                            <option key={t.teamId} value={t.teamId}>
+                              {t.name || t.teamId}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                          <button className="btn btnPrimary" onClick={() => saveCoachAssignment(c.userId)}>
+                            Save
+                          </button>
+                          <button
+                            className="btn"
+                            onClick={() => clearCoachAssignment(c.userId)}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

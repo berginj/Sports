@@ -1,5 +1,3 @@
-import { persistLeagueId } from "../lib/useSession";
-
 export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
   const memberships = Array.isArray(me?.memberships) ? me.memberships : [];
   const email = me?.email || "";
@@ -7,7 +5,6 @@ export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
 
   function pickLeague(id) {
     setLeagueId(id);
-    persistLeagueId(id);
   }
 
   const hasLeagues = memberships.length > 0;
@@ -53,6 +50,13 @@ export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
               disabled={!hasLeagues}
             >
               Offers
+            </button>
+            <button
+              className={tab === "calendar" ? "tab tab--active" : "tab"}
+              onClick={() => setTab("calendar")}
+              disabled={!hasLeagues}
+            >
+              Calendar
             </button>
             <button
               className={tab === "manage" ? "tab tab--active" : "tab"}

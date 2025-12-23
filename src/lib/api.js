@@ -1,5 +1,7 @@
 // src/lib/api.js
 
+import { LEAGUE_HEADER_NAME, LEAGUE_STORAGE_KEY } from "./constants";
+
 /**
  * PROD (Azure Static Web Apps): use relative /api so SWA proxies to linked Function App.
  * DEV: allow overriding to call a direct Function App host.
@@ -19,9 +21,10 @@ export async function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
 
   // Always attach active league id (multi-tenant context)
-  const leagueId = localStorage.getItem("activeLeagueId");
-  if (leagueId && !headers.has("x-league-id")) {
-    headers.set("x-league-id", leagueId);
+  // NOTE: league-scoped endpoints require this header.
+  const leagueId = (localStorage.getItem(LEAGUE_STORAGE_KEY) || "").trim();
+  if (leagueId && !headers.has(LEAGUE_HEADER_NAME)) {
+    headers.set(LEAGUE_HEADER_NAME, leagueId);
   }
 
   if (options.body && !headers.has("Content-Type")) {
@@ -42,13 +45,17 @@ export async function apiFetch(path, options = {}) {
     data = text;
   }
 
+  // Standard envelope
   if (!res.ok) {
+    const err = data?.error;
     const msg =
-      typeof data === "string" && data
-        ? data
-        : data?.error || data?.message || res.statusText;
-    throw new Error(`${res.status} ${msg}`);
+      (typeof err === "string" ? err : err?.message) ||
+      (typeof data === "string" ? data : "Request failed");
+    const code = typeof err === "object" && err?.code ? `${err.code}: ` : "";
+    throw new Error(`${res.status} ${code}${msg}`);
   }
 
+  // Successful responses should be { data: ... }
+  if (data && typeof data === "object" && "data" in data) return data.data;
   return data;
 }

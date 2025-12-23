@@ -1,176 +1,119 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api";
+import { FIELD_STATUS } from "../lib/constants";
 
-// Bulk upsert Fields via /api/fields/bulk
-// Expected CSV headers (case-insensitive):
-//   ParkName, FieldName
-// Optional:
-//   DisplayName, Address, Surface, Lights, IsActive, Notes
+// Admin tool: CSV import is the ONLY fields workflow.
+// Contract: POST /import/fields (text/csv) with required columns: fieldKey, parkName, fieldName.
 
-function parseCsv(text) {
-  const lines = (text || "")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-  if (lines.length === 0) return { headers: [], rows: [] };
+const SAMPLE_CSV = `fieldKey,parkName,fieldName,displayName,address,notes,status
+gunston/turf,Gunston Park,Turf,Gunston Park > Turf,,,${FIELD_STATUS.ACTIVE}
+tuckahoe/field-2,Tuckahoe Park,Field 2,Tuckahoe Park > Field 2,,,${FIELD_STATUS.ACTIVE}
+`;
 
-  // very small CSV parser: supports commas + quoted values
-  function splitLine(line) {
-    const out = [];
-    let cur = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-        continue;
-      }
-      if (ch === "," && !inQuotes) {
-        out.push(cur);
-        cur = "";
-        continue;
-      }
-      cur += ch;
-    }
-    out.push(cur);
-    return out.map((s) => s.trim());
-  }
-
-  const headers = splitLine(lines[0]).map((h) => h.toLowerCase());
-  const rows = lines.slice(1).map(splitLine);
-  return { headers, rows };
-}
-
-function getCell(row, headers, name) {
-  const idx = headers.indexOf(name.toLowerCase());
-  if (idx < 0) return "";
-  return (row[idx] || "").trim();
-}
-
-function toBool(v, defaultValue) {
-  if (!v) return defaultValue;
-  const s = String(v).trim().toLowerCase();
-  if (["true", "t", "yes", "y", "1"].includes(s)) return true;
-  if (["false", "f", "no", "n", "0"].includes(s)) return false;
-  return defaultValue;
-}
-
-export default function FieldsImport() {
-  const [csvText, setCsvText] = useState(
-    [
-      "ParkName,FieldName,DisplayName,Address,Surface,Lights,IsActive,Notes",
-      "Gunston Park,Turf Field,Gunston Park > Turf Field,,,true,true,",
-    ].join("\n")
-  );
-
-  const [result, setResult] = useState(null);
+export default function FieldsImport({ leagueId }) {
+  const [fields, setFields] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
 
-  const preview = useMemo(() => {
-    const parsed = parseCsv(csvText);
-    const headers = parsed.headers;
-    const rows = parsed.rows;
+  const [csvText, setCsvText] = useState(SAMPLE_CSV);
 
-    const required = ["parkname", "fieldname"];
-    const missing = required.filter((h) => !headers.includes(h));
-
-    const items = [];
-    const errors = [];
-
-    rows.forEach((row, i) => {
-      const parkName = getCell(row, headers, "parkname");
-      const fieldName = getCell(row, headers, "fieldname");
-      if (!parkName || !fieldName) {
-        errors.push({ row: i + 2, error: "ParkName and FieldName are required" });
-        return;
-      }
-
-      const displayName = getCell(row, headers, "displayname") || `${parkName} > ${fieldName}`;
-      const address = getCell(row, headers, "address");
-      const surface = getCell(row, headers, "surface");
-      const notes = getCell(row, headers, "notes");
-      const lights = toBool(getCell(row, headers, "lights"), false);
-      const isActive = toBool(getCell(row, headers, "isactive"), true);
-
-      items.push({ parkName, fieldName, displayName, address, surface, notes, lights, isActive });
-    });
-
-    return { headers, missing, items, errors };
-  }, [csvText]);
-
-  async function doImport() {
-    setBusy(true);
+  async function load() {
     setErr("");
-    setResult(null);
     try {
-      if (preview.missing.length) {
-        setErr(`Missing required columns: ${preview.missing.join(", ")}`);
-        return;
-      }
-      if (preview.items.length === 0) {
-        setErr("No valid rows to import.");
-        return;
-      }
-
-      const data = await apiFetch("/api/fields/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: preview.items }),
-      });
-
-      setResult(data);
+      const list = await apiFetch("/api/fields?activeOnly=false");
+      setFields(Array.isArray(list) ? list : []);
     } catch (e) {
-      setErr(e?.message || String(e));
+      setErr(e?.message || "Failed to load fields");
+    }
+  }
+
+  useEffect(() => {
+    if (!leagueId) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueId]);
+
+  async function importCsv() {
+    setErr("");
+    setOk("");
+    setBusy(true);
+    try {
+      const res = await apiFetch("/api/import/fields", {
+        method: "POST",
+        headers: { "Content-Type": "text/csv" },
+        body: csvText,
+      });
+      const msg = `Imported. Upserted: ${res?.upserted ?? 0}, Rejected: ${res?.rejected ?? 0}, Skipped: ${res?.skipped ?? 0}`;
+      setOk(msg);
+      await load();
+    } catch (e) {
+      setErr(e?.message || "Import failed");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section>
-      <h2>Import Fields</h2>
-      <p className="muted">
-        Paste CSV below and import. Required columns: <b>ParkName</b>, <b>FieldName</b>.
-        The active league is taken from the league picker above.
-      </p>
+    <div className="stack">
+      {err ? <div className="callout callout--error">{err}</div> : null}
+      {ok ? <div className="callout callout--ok">{ok}</div> : null}
 
-      <textarea
-        className="textarea"
-        rows={10}
-        value={csvText}
-        onChange={(e) => setCsvText(e.target.value)}
-      />
+      <div>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>CSV import</div>
+        <div className="subtle" style={{ marginBottom: 10, lineHeight: 1.4 }}>
+          Required columns: <code>fieldKey</code>, <code>parkName</code>, <code>fieldName</code>. Optional: <code>displayName</code>,{" "}
+          <code>address</code>, <code>notes</code>, <code>status</code> ({FIELD_STATUS.ACTIVE}/{FIELD_STATUS.INACTIVE}).
+        </div>
 
-      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-        <button className="btn" disabled={busy} onClick={doImport}>
-          {busy ? "Importing…" : `Import ${preview.items.length} fields`}
-        </button>
-        {preview.errors.length > 0 && (
-          <span className="pill pill--warn">{preview.errors.length} row errors (will be skipped)</span>
-        )}
+        <textarea
+          value={csvText}
+          onChange={(e) => setCsvText(e.target.value)}
+          rows={10}
+          style={{
+            width: "100%",
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+          }}
+        />
+
+        <div className="row" style={{ marginTop: 10 }}>
+          <button className="btn" onClick={importCsv} disabled={busy || !leagueId}>
+            {busy ? "Importing…" : "Import CSV"}
+          </button>
+          <button className="btn btn--ghost" onClick={load} disabled={!leagueId}>
+            Reload
+          </button>
+        </div>
       </div>
 
-      {err && <div className="alert alert--error">{err}</div>}
-
-      {preview.errors.length > 0 && (
-        <details>
-          <summary>Row errors</summary>
-          <pre className="code">{JSON.stringify(preview.errors, null, 2)}</pre>
-        </details>
-      )}
-
-      {result && (
-        <details open>
-          <summary>Result</summary>
-          <pre className="code">{JSON.stringify(result, null, 2)}</pre>
-        </details>
-      )}
-    </section>
+      <div>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Current fields ({fields.length})</div>
+        {fields.length === 0 ? (
+          <div className="subtle">No fields yet.</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Display</th>
+                <th>Field Key</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fields.map((f) => (
+                <tr key={f.fieldKey}>
+                  <td>{f.displayName}</td>
+                  <td>
+                    <code>{f.fieldKey}</code>
+                  </td>
+                  <td>{f.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }

@@ -40,7 +40,7 @@ export default function OffersPage({ me }) {
       setFields(fieldList);
 
       if (firstDiv) {
-        const s = await apiFetch(`/api/slots/${encodeURIComponent(firstDiv)}`);
+        const s = await apiFetch(`/api/slots?division=${encodeURIComponent(firstDiv)}`);
         setSlots(Array.isArray(s) ? s : []);
       } else {
         setSlots([]);
@@ -63,7 +63,7 @@ export default function OffersPage({ me }) {
     if (!d) return;
     setErr("");
     try {
-      const s = await apiFetch(`/api/slots/${encodeURIComponent(d)}`);
+      const s = await apiFetch(`/api/slots?division=${encodeURIComponent(d)}`);
       setSlots(Array.isArray(s) ? s : []);
     } catch (e) {
       setErr(e?.message || String(e));
@@ -120,15 +120,14 @@ export default function OffersPage({ me }) {
   }
 
   // --- Request slot ---
-  const [requestingTeamId, setRequestingTeamId] = useState("");
   async function requestSlot(slot) {
     setErr("");
-    if (!requestingTeamId.trim()) return setErr("Requesting Team ID is required.");
+    const notes = prompt("Notes for the other team? (optional)") || "";
     try {
       await apiFetch(`/api/slots/${encodeURIComponent(division)}/${encodeURIComponent(slot.slotId)}/requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestingTeamId: requestingTeamId.trim() }),
+        body: JSON.stringify({ notes }),
       });
       await reloadSlots(division);
     } catch (e) {
@@ -202,13 +201,6 @@ export default function OffersPage({ me }) {
 
       <div className="card">
         <div className="cardTitle">Open slots</div>
-        <div className="row">
-          <label style={{ flex: 1 }}>
-            Your Requesting Team ID
-            <input value={requestingTeamId} onChange={(e) => setRequestingTeamId(e.target.value)} />
-          </label>
-        </div>
-
         {slots.length === 0 ? (
           <div className="muted">No slots found for this division.</div>
         ) : (

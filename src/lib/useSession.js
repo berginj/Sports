@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-
-// Local storage key for the last selected league.
-const LS_LEAGUE = "gameswap_leagueId";
+import { apiFetch } from "./api";
+import { LEAGUE_STORAGE_KEY } from "./constants";
 
 export function persistLeagueId(leagueId) {
   try {
     if (!leagueId) {
-      localStorage.removeItem(LS_LEAGUE);
+      localStorage.removeItem(LEAGUE_STORAGE_KEY);
     } else {
-      localStorage.setItem(LS_LEAGUE, leagueId);
+      localStorage.setItem(LEAGUE_STORAGE_KEY, leagueId);
     }
   } catch {
     // ignore
@@ -18,7 +17,7 @@ export function persistLeagueId(leagueId) {
 export function getInitialLeagueId(me) {
   // 1) Persisted value
   try {
-    const saved = (localStorage.getItem(LS_LEAGUE) || "").trim();
+    const saved = (localStorage.getItem(LEAGUE_STORAGE_KEY) || "").trim();
     if (saved) return saved;
   } catch {
     // ignore
@@ -40,15 +39,7 @@ export function useSession() {
       setLoading(true);
       setError("");
       try {
-        const res = await fetch("/api/me", { credentials: "include" });
-        const text = await res.text();
-        let data;
-        try {
-          data = text ? JSON.parse(text) : null;
-        } catch {
-          data = null;
-        }
-        if (!res.ok) throw new Error(data?.error || `Failed to load /api/me (${res.status})`);
+        const data = await apiFetch("/api/me");
         if (!cancelled) setMe(data || {});
       } catch (e) {
         if (!cancelled) setError(e?.message || "Failed to load session");
@@ -66,32 +57,31 @@ export function useSession() {
   const hasMemberships = memberships.length > 0;
   const isGlobalAdmin = !!me?.isGlobalAdmin;
 
-  const [leagueId, setLeagueId] = useState("");
+  const [activeLeagueId, setActiveLeagueId] = useState("");
 
   // Pick an initial leagueId once `me` loads.
   useEffect(() => {
     if (!me) return;
     const initial = getInitialLeagueId(me);
-    if (initial && !leagueId) setLeagueId(initial);
-  }, [me]); // intentionally omit leagueId
+    if (initial && !activeLeagueId) setActiveLeagueId(initial);
+  }, [me]); // intentionally omit activeLeagueId
 
   // Persist league changes
   useEffect(() => {
-    if (leagueId) persistLeagueId(leagueId);
-  }, [leagueId]);
+    if (activeLeagueId) persistLeagueId(activeLeagueId);
+  }, [activeLeagueId]);
 
   return {
     me: me || {},
     memberships,
     hasMemberships,
     isGlobalAdmin,
-    leagueId,
-    setLeagueId,
+    activeLeagueId,
+    setActiveLeagueId,
     loading,
     error,
     refreshMe: async () => {
-      const res = await fetch("/api/me", { credentials: "include" });
-      const data = await res.json();
+      const data = await apiFetch("/api/me");
       setMe(data || {});
       return data;
     },
