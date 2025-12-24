@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api";
 
 function fmtDate(d) {
@@ -6,38 +6,21 @@ function fmtDate(d) {
 }
 
 export default function OffersPage({ me }) {
-  const email = me?.email || "";
   const [divisions, setDivisions] = useState([]);
   const [division, setDivision] = useState("");
-  const [fields, setFields] = useState([]);
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-
-  const fieldByKey = useMemo(() => {
-    const m = new Map();
-    for (const f of fields || []) {
-      const k = f?.fieldKey || "";
-      if (k) m.set(k, f);
-    }
-    return m;
-  }, [fields]);
 
   async function loadAll(selectedDivision) {
     setErr("");
     setLoading(true);
     try {
-      const [divs, flds] = await Promise.all([
-        apiFetch("/api/divisions"),
-        apiFetch("/api/fields"),
-      ]);
+      const divs = await apiFetch("/api/divisions");
       const divList = Array.isArray(divs) ? divs : [];
       setDivisions(divList);
       const firstDiv = selectedDivision || divList?.[0]?.code || "";
       setDivision(firstDiv);
-
-      const fieldList = Array.isArray(flds) ? flds : [];
-      setFields(fieldList);
 
       if (firstDiv) {
         const s = await apiFetch(`/api/slots?division=${encodeURIComponent(firstDiv)}`);
@@ -65,55 +48,6 @@ export default function OffersPage({ me }) {
     try {
       const s = await apiFetch(`/api/slots?division=${encodeURIComponent(d)}`);
       setSlots(Array.isArray(s) ? s : []);
-    } catch (e) {
-      setErr(e?.message || String(e));
-    }
-  }
-
-  // --- Create slot ---
-  const [offeringTeamId, setOfferingTeamId] = useState("");
-  const [gameDate, setGameDate] = useState("");
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
-  const [fieldKey, setFieldKey] = useState("");
-  const [notes, setNotes] = useState("");
-
-  async function createSlot() {
-    setErr("");
-    const f = fieldByKey.get(fieldKey);
-    if (!division) return setErr("Select a division first.");
-    if (!offeringTeamId.trim()) return setErr("Offering Team ID is required.");
-    if (!gameDate.trim()) return setErr("GameDate is required.");
-    if (!startTime.trim() || !endTime.trim()) return setErr("StartTime/EndTime are required.");
-    if (!f) return setErr("Select a field.");
-
-    const body = {
-      division,
-      offeringTeamId: offeringTeamId.trim(),
-      offeringEmail: email,
-      gameDate: gameDate.trim(),
-      startTime: startTime.trim(),
-      endTime: endTime.trim(),
-      parkName: f.parkName,
-      fieldName: f.fieldName,
-      displayName: f.displayName,
-      fieldKey: f.fieldKey,
-      notes: notes.trim(),
-    };
-
-    try {
-      await apiFetch(`/api/slots`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      setOfferingTeamId("");
-      setGameDate("");
-      setStartTime("");
-      setEndTime("");
-      setFieldKey("");
-      setNotes("");
-      await reloadSlots(division);
     } catch (e) {
       setErr(e?.message || String(e));
     }
@@ -151,50 +85,8 @@ export default function OffersPage({ me }) {
               </option>
             ))}
           </select>
-          <button className="btn" onClick={() => loadAll(division)}>
+          <button className="btn" onClick={() => loadAll(division)} disabled={loading}>
             Refresh
-          </button>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="cardTitle">Create a slot</div>
-        <div className="grid2">
-          <label>
-            Offering Team ID
-            <input value={offeringTeamId} onChange={(e) => setOfferingTeamId(e.target.value)} />
-          </label>
-          <label>
-            Field
-            <select value={fieldKey} onChange={(e) => setFieldKey(e.target.value)}>
-              <option value="">Select…</option>
-              {fields.map((f) => (
-                <option key={f.fieldKey} value={f.fieldKey}>
-                  {f.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            GameDate (YYYY-MM-DD)
-            <input value={gameDate} onChange={(e) => setGameDate(e.target.value)} placeholder="2026-03-29" />
-          </label>
-          <label>
-            StartTime (HH:MM)
-            <input value={startTime} onChange={(e) => setStartTime(e.target.value)} placeholder="09:00" />
-          </label>
-          <label>
-            EndTime (HH:MM)
-            <input value={endTime} onChange={(e) => setEndTime(e.target.value)} placeholder="10:15" />
-          </label>
-          <label>
-            Notes
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </label>
-        </div>
-        <div className="row">
-          <button className="btn primary" onClick={createSlot}>
-            Create Slot
           </button>
         </div>
       </div>

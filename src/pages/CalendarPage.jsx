@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiFetch } from "../lib/api";
+import { apiBase, apiFetch } from "../lib/api";
 
 function toDateInputValue(d) {
   const yyyy = d.getFullYear();
@@ -10,6 +10,25 @@ function toDateInputValue(d) {
 
 function normalizeRole(role) {
   return (role || "").trim();
+}
+
+function toWebcalUrl(url) {
+  if (!url) return "";
+  return url.replace(/^https?:/i, "webcal:");
+}
+
+function buildSubscribeUrl(leagueId) {
+  const template = import.meta.env.VITE_CALENDAR_SUBSCRIBE_URL;
+  if (template) {
+    return template.replace("{leagueId}", encodeURIComponent(leagueId || ""));
+  }
+
+  if (typeof window === "undefined") return "";
+  const base = apiBase();
+  const origin = base || window.location.origin;
+  const url = new URL("/api/calendar/ics", origin);
+  if (leagueId) url.searchParams.set("leagueId", leagueId);
+  return url.toString();
 }
 
 export default function CalendarPage({ me, leagueId }) {
@@ -31,6 +50,7 @@ export default function CalendarPage({ me, leagueId }) {
 
   const [divisions, setDivisions] = useState([]);
   const [division, setDivision] = useState("");
+  const [fields, setFields] = useState([]);
 
   const today = useMemo(() => new Date(), []);
   const [dateFrom, setDateFrom] = useState(toDateInputValue(today));
@@ -41,10 +61,26 @@ export default function CalendarPage({ me, leagueId }) {
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const subscribeUrl = useMemo(() => buildSubscribeUrl(leagueId), [leagueId]);
+  const webcalUrl = useMemo(() => toWebcalUrl(subscribeUrl), [subscribeUrl]);
+
+  async function copySubscribeUrl() {
+    if (!subscribeUrl) return;
+    try {
+      await navigator.clipboard.writeText(subscribeUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   async function loadMeta() {
-    const divs = await apiFetch("/api/divisions");
+    const [divs, flds] = await Promise.all([apiFetch("/api/divisions"), apiFetch("/api/fields")]);
     setDivisions(Array.isArray(divs) ? divs : []);
+    setFields(Array.isArray(flds) ? flds : []);
   }
 
   async function loadData() {
@@ -135,11 +171,23 @@ export default function CalendarPage({ me, leagueId }) {
       });
   }, [events, slots]);
 
+  const fieldByKey = useMemo(() => {
+    const m = new Map();
+    for (const f of fields || []) {
+      const k = f?.fieldKey || "";
+      if (k) m.set(k, f);
+    }
+    return m;
+  }, [fields]);
+
   // --- Create events ---
   // Events are non-game calendar items managed by LeagueAdmin.
   // Game requests/offers live under Slots.
   const canCreateEvents = role === "LeagueAdmin";
   const canDeleteAnyEvent = role === "LeagueAdmin";
+  const canCreateSlots = role === "Coach" || role === "LeagueAdmin" || isGlobalAdmin;
+
+  const [createKind, setCreateKind] = useState(canCreateEvents ? "offer" : "offer");
 
   const [newType, setNewType] = useState("Practice");
   const [newDivision, setNewDivision] = useState("");
@@ -151,12 +199,76 @@ export default function CalendarPage({ me, leagueId }) {
   const [newLocation, setNewLocation] = useState("");
   const [newNotes, setNewNotes] = useState("");
 
+  const [offerDivision, setOfferDivision] = useState("");
+  const [offeringTeamId, setOfferingTeamId] = useState("");
+  const [offerDate, setOfferDate] = useState("");
+  const [offerStart, setOfferStart] = useState("");
+  const [offerEnd, setOfferEnd] = useState("");
+  const [offerFieldKey, setOfferFieldKey] = useState("");
+  const [offerNotes, setOfferNotes] = useState("");
+
+  useEffect(() => {
+    if (!canCreateEvents && createKind === "event") {
+      setCreateKind("offer");
+    }
+  }, [canCreateEvents, createKind]);
+
+  useEffect(() => {
+    if (!offerDivision) {
+      if (division) {
+        setOfferDivision(division);
+      } else if (divisions[0]?.code) {
+        setOfferDivision(divisions[0].code);
+      }
+    }
+  }, [division, divisions, offerDivision]);
+
+  async function createSlot() {
+    setErr("");
+    const f = fieldByKey.get(offerFieldKey);
+    if (!offerDivision) return setErr("Select a division first.");
+    if (!offeringTeamId.trim()) return setErr("Offering Team ID is required.");
+    if (!offerDate.trim()) return setErr("GameDate is required.");
+    if (!offerStart.trim() || !offerEnd.trim()) return setErr("StartTime/EndTime are required.");
+    if (offerStart.trim() >= offerEnd.trim()) return setErr("EndTime must be after StartTime.");
+    if (!f) return setErr("Select a field.");
+
+    try {
+      await apiFetch(`/api/slots`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          division: offerDivision,
+          offeringTeamId: offeringTeamId.trim(),
+          gameDate: offerDate.trim(),
+          startTime: offerStart.trim(),
+          endTime: offerEnd.trim(),
+          parkName: f.parkName,
+          fieldName: f.fieldName,
+          displayName: f.displayName,
+          fieldKey: f.fieldKey,
+          notes: offerNotes.trim(),
+        }),
+      });
+      setOfferingTeamId("");
+      setOfferDate("");
+      setOfferStart("");
+      setOfferEnd("");
+      setOfferFieldKey("");
+      setOfferNotes("");
+      await loadData();
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
+  }
+
   async function createEvent() {
     setErr("");
     if (!newTitle.trim()) return setErr("Title is required.");
     if (!newDate.trim()) return setErr("EventDate is required (YYYY-MM-DD).");
     if (!newStart.trim()) return setErr("StartTime is required (HH:MM).");
     if (!newEnd.trim()) return setErr("EndTime is required (HH:MM).");
+    if (newStart.trim() >= newEnd.trim()) return setErr("EndTime must be after StartTime.");
 
     try {
       await apiFetch(`/api/events`, {
@@ -271,66 +383,207 @@ export default function CalendarPage({ me, leagueId }) {
           </label>
           <label>
             From
-            <input value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} placeholder="YYYY-MM-DD" />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              placeholder="YYYY-MM-DD"
+            />
           </label>
           <label>
             To
-            <input value={dateTo} onChange={(e) => setDateTo(e.target.value)} placeholder="YYYY-MM-DD" />
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              placeholder="YYYY-MM-DD"
+            />
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18 }}>
             <input type="checkbox" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
             Show cancelled
           </label>
-          <button className="btn" onClick={loadData}>
+          <button className="btn" onClick={loadData} disabled={loading}>
             Refresh
           </button>
         </div>
         <div className="muted" style={{ marginTop: 8 }}>
           Showing slots + events for <b>{leagueId || "(no league)"}</b>.
         </div>
+        <div className="stack" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 600 }}>Subscribe to this calendar</div>
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            <input
+              readOnly
+              value={subscribeUrl || "Select a league to enable subscriptions."}
+              style={{ minWidth: 280, flex: "1 1 320px" }}
+            />
+            <button className="btn" onClick={copySubscribeUrl} disabled={!subscribeUrl}>
+              {copied ? "Copied" : "Copy URL"}
+            </button>
+            <a
+              className="btn"
+              href={webcalUrl || "#"}
+              aria-disabled={!webcalUrl}
+              onClick={(event) => {
+                if (!webcalUrl) event.preventDefault();
+              }}
+            >
+              Subscribe
+            </a>
+          </div>
+          <div className="muted">
+            Use the Subscribe button to open your calendar app, or copy the URL for manual setup.
+          </div>
+        </div>
       </div>
 
-      {canCreateEvents ? (
+      {canCreateSlots || canCreateEvents ? (
         <div className="card">
-          <div className="cardTitle">{role === "Coach" ? "Request a game" : "Add an event"}</div>
-          <div className="grid2">
-            {role === "LeagueAdmin" ? (
-              <label>
-                Type
-                <select value={newType} onChange={(e) => setNewType(e.target.value)}>
-                  <option value="Practice">Practice</option>
-                  <option value="Meeting">Meeting</option>
-                  <option value="Clinic">Clinic</option>
-                  <option value="Other">Other</option>
-                </select>
+          <div className="cardTitle">Create</div>
+          {canCreateEvents ? (
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="radio"
+                  name="createKind"
+                  value="offer"
+                  checked={createKind === "offer"}
+                  onChange={() => setCreateKind("offer")}
+                />
+                Offer a game slot
               </label>
-            ) : null}
-            <label>
-              Title
-              <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
-            </label>
-            <label>
-              Location
-              <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} />
-            </label>
-            <label>
-              EventDate (YYYY-MM-DD)
-              <input value={newDate} onChange={(e) => setNewDate(e.target.value)} placeholder="2026-04-05" />
-            </label>
-            <label>
-              StartTime (HH:MM)
-              <input value={newStart} onChange={(e) => setNewStart(e.target.value)} placeholder="18:00" />
-            </label>
-            <label>
-              EndTime (HH:MM)
-              <input value={newEnd} onChange={(e) => setNewEnd(e.target.value)} placeholder="19:30" />
-            </label>
-            <label>
-              Notes
-              <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)} />
-            </label>
-            {role === "LeagueAdmin" ? (
-              <>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="radio"
+                  name="createKind"
+                  value="event"
+                  checked={createKind === "event"}
+                  onChange={() => setCreateKind("event")}
+                />
+                Create an event
+              </label>
+            </div>
+          ) : null}
+
+          {createKind === "offer" ? (
+            <>
+              <div className="grid2">
+                <label>
+                  Division
+                  <select value={offerDivision} onChange={(e) => setOfferDivision(e.target.value)}>
+                    <option value="">Select…</option>
+                    {divisions.map((d) => (
+                      <option key={d.code} value={d.code}>
+                        {d.name} ({d.code})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Offering Team ID
+                  <input value={offeringTeamId} onChange={(e) => setOfferingTeamId(e.target.value)} />
+                </label>
+                <label>
+                  Field
+                  <select value={offerFieldKey} onChange={(e) => setOfferFieldKey(e.target.value)}>
+                    <option value="">Select…</option>
+                    {fields.map((f) => (
+                      <option key={f.fieldKey} value={f.fieldKey}>
+                        {f.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  GameDate (YYYY-MM-DD)
+                  <input
+                    type="date"
+                    value={offerDate}
+                    onChange={(e) => setOfferDate(e.target.value)}
+                    placeholder="2026-03-29"
+                  />
+                </label>
+                <label>
+                  StartTime (HH:MM)
+                  <input
+                    type="time"
+                    value={offerStart}
+                    onChange={(e) => setOfferStart(e.target.value)}
+                    placeholder="09:00"
+                  />
+                </label>
+                <label>
+                  EndTime (HH:MM)
+                  <input
+                    type="time"
+                    value={offerEnd}
+                    onChange={(e) => setOfferEnd(e.target.value)}
+                    placeholder="10:15"
+                  />
+                </label>
+                <label>
+                  Notes
+                  <input value={offerNotes} onChange={(e) => setOfferNotes(e.target.value)} />
+                </label>
+              </div>
+              <div className="row">
+                <button className="btn primary" onClick={createSlot} disabled={loading}>
+                  Create Offer
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid2">
+                <label>
+                  Type
+                  <select value={newType} onChange={(e) => setNewType(e.target.value)}>
+                    <option value="Practice">Practice</option>
+                    <option value="Meeting">Meeting</option>
+                    <option value="Clinic">Clinic</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </label>
+                <label>
+                  Title
+                  <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
+                </label>
+                <label>
+                  Location
+                  <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} />
+                </label>
+                <label>
+                  EventDate (YYYY-MM-DD)
+                  <input
+                    type="date"
+                    value={newDate}
+                    onChange={(e) => setNewDate(e.target.value)}
+                    placeholder="2026-04-05"
+                  />
+                </label>
+                <label>
+                  StartTime (HH:MM)
+                  <input
+                    type="time"
+                    value={newStart}
+                    onChange={(e) => setNewStart(e.target.value)}
+                    placeholder="18:00"
+                  />
+                </label>
+                <label>
+                  EndTime (HH:MM)
+                  <input
+                    type="time"
+                    value={newEnd}
+                    onChange={(e) => setNewEnd(e.target.value)}
+                    placeholder="19:30"
+                  />
+                </label>
+                <label>
+                  Notes
+                  <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)} />
+                </label>
                 <label>
                   Division (optional)
                   <input value={newDivision} onChange={(e) => setNewDivision(e.target.value)} placeholder="10U" />
@@ -339,12 +592,14 @@ export default function CalendarPage({ me, leagueId }) {
                   Team ID (optional)
                   <input value={newTeamId} onChange={(e) => setNewTeamId(e.target.value)} placeholder="TIGERS" />
                 </label>
-              </>
-            ) : null}
-          </div>
-          <div className="row">
-            <button className="btn primary" onClick={createEvent}>Create Event</button>
-          </div>
+              </div>
+              <div className="row">
+                <button className="btn primary" onClick={createEvent} disabled={loading}>
+                  Create Event
+                </button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
 
