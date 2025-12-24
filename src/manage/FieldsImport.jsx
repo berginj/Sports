@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { FIELD_STATUS } from "../lib/constants";
 
 // Admin tool: CSV import is the ONLY fields workflow.
-// Contract: POST /import/fields (text/csv) with required columns: fieldKey, parkName, fieldName.
+// Contract: POST /import/fields with required columns: fieldKey, parkName, fieldName.
+// Robust backend should accept multipart/form-data (file upload) and text/csv (raw body).
 
 const SAMPLE_CSV = `fieldKey,parkName,fieldName,displayName,address,notes,status
 gunston/turf,Gunston Park,Turf,Gunston Park > Turf,,,${FIELD_STATUS.ACTIVE}
@@ -16,7 +17,14 @@ export default function FieldsImport({ leagueId }) {
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
+  // Keep paste-text option as fallback
   const [csvText, setCsvText] = useState(SAMPLE_CSV);
+
+  // File upload state
+  const [file, setFile] = useState(null);
+
+  // Optional: show server row errors if provided
+  const [rowErrors, setRowErrors] = useState([]);
 
   async function load() {
     setErr("");
@@ -34,9 +42,50 @@ export default function FieldsImport({ leagueId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leagueId]);
 
-  async function importCsv() {
+  const canImport = useMemo(() => !!leagueId && !busy, [leagueId, busy]);
+
+  async function importCsvFile() {
     setErr("");
     setOk("");
+    setRowErrors([]);
+
+    if (!leagueId) return setErr("Select a league first.");
+    if (!file) return setErr("Choose a CSV file to upload.");
+
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+
+      // IMPORTANT: do NOT set Content-Type manually for multipart; browser will set boundary.
+      const res = await apiFetch("/api/import/fields", {
+        method: "POST",
+        body: fd,
+      });
+
+      const msg = `Imported. Upserted: ${res?.upserted ?? 0}, Rejected: ${res?.rejected ?? 0}, Skipped: ${res?.skipped ?? 0}`;
+      setOk(msg);
+
+      if (Array.isArray(res?.errors) && res.errors.length) {
+        setRowErrors(res.errors);
+      }
+
+      await load();
+    } catch (e) {
+      setErr(e?.message || "Import failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importCsvText() {
+    setErr("");
+    setOk("");
+    setRowErrors([]);
+
+    if (!leagueId) return setErr("Select a league first.");
+    if (!csvText.trim()) return setErr("Paste CSV content first.");
+
     setBusy(true);
     try {
       const res = await apiFetch("/api/import/fields", {
@@ -44,8 +93,14 @@ export default function FieldsImport({ leagueId }) {
         headers: { "Content-Type": "text/csv" },
         body: csvText,
       });
+
       const msg = `Imported. Upserted: ${res?.upserted ?? 0}, Rejected: ${res?.rejected ?? 0}, Skipped: ${res?.skipped ?? 0}`;
       setOk(msg);
+
+      if (Array.isArray(res?.errors) && res.errors.length) {
+        setRowErrors(res.errors);
+      }
+
       await load();
     } catch (e) {
       setErr(e?.message || "Import failed");
@@ -59,35 +114,89 @@ export default function FieldsImport({ leagueId }) {
       {err ? <div className="callout callout--error">{err}</div> : null}
       {ok ? <div className="callout callout--ok">{ok}</div> : null}
 
-      <div>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>CSV import</div>
+      <div className="card">
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Field CSV import</div>
         <div className="subtle" style={{ marginBottom: 10, lineHeight: 1.4 }}>
-          Required columns: <code>fieldKey</code>, <code>parkName</code>, <code>fieldName</code>. Optional: <code>displayName</code>,{" "}
-          <code>address</code>, <code>notes</code>, <code>status</code> ({FIELD_STATUS.ACTIVE}/{FIELD_STATUS.INACTIVE}).
+          Required columns: <code>fieldKey</code>, <code>parkName</code>, <code>fieldName</code>. Optional:{" "}
+          <code>displayName</code>, <code>address</code>, <code>notes</code>, <code>status</code> ({FIELD_STATUS.ACTIVE}/
+          {FIELD_STATUS.INACTIVE}).
         </div>
 
-        <textarea
-          value={csvText}
-          onChange={(e) => setCsvText(e.target.value)}
-          rows={10}
-          style={{
-            width: "100%",
-            fontFamily:
-              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-          }}
-        />
+        <div className="row" style={{ alignItems: "end", gap: 12 }}>
+          <label style={{ flex: 1 }}>
+            CSV file
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              disabled={!leagueId || busy}
+            />
+          </label>
+
+          <button className="btn" onClick={importCsvFile} disabled={!canImport || !file}>
+            {busy ? "Importing…" : "Upload & Import"}
+          </button>
+        </div>
+
+        <details style={{ marginTop: 12 }}>
+          <summary style={{ cursor: "pointer" }}>Or paste CSV (fallback)</summary>
+          <textarea
+            value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            rows={10}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+            }}
+            disabled={!leagueId || busy}
+          />
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn btn--ghost" onClick={importCsvText} disabled={!canImport}>
+              {busy ? "Importing…" : "Import Pasted CSV"}
+            </button>
+          </div>
+        </details>
+
+        {rowErrors.length ? (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Rejected rows ({rowErrors.length})</div>
+            <div className="subtle" style={{ marginBottom: 8 }}>
+              These are row numbers from the CSV (including the header row).
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Field Key</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rowErrors.slice(0, 50).map((x, idx) => (
+                  <tr key={idx}>
+                    <td>{x.row}</td>
+                    <td>
+                      <code>{x.fieldKey || ""}</code>
+                    </td>
+                    <td>{x.error}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {rowErrors.length > 50 ? <div className="subtle">Showing first 50.</div> : null}
+          </div>
+        ) : null}
 
         <div className="row" style={{ marginTop: 10 }}>
-          <button className="btn" onClick={importCsv} disabled={busy || !leagueId}>
-            {busy ? "Importing…" : "Import CSV"}
-          </button>
-          <button className="btn btn--ghost" onClick={load} disabled={!leagueId}>
-            Reload
+          <button className="btn btn--ghost" onClick={load} disabled={!leagueId || busy}>
+            Reload fields
           </button>
         </div>
       </div>
 
-      <div>
+      <div className="card">
         <div style={{ fontWeight: 700, marginBottom: 6 }}>Current fields ({fields.length})</div>
         {fields.length === 0 ? (
           <div className="subtle">No fields yet.</div>
