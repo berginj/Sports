@@ -463,127 +463,48 @@ export default function CalendarPage({ me, leagueId }) {
                 />
                 Create an event
               </label>
-            </div>
-          ) : null}
-
-          {createKind === "offer" ? (
-            <>
-              <div className="grid2">
-                <label>
-                  Division
-                  <select value={offerDivision} onChange={(e) => setOfferDivision(e.target.value)}>
-                    <option value="">Select…</option>
-                    {divisions.map((d) => (
-                      <option key={d.code} value={d.code}>
-                        {d.name} ({d.code})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Offering Team ID
-                  <input value={offeringTeamId} onChange={(e) => setOfferingTeamId(e.target.value)} />
-                </label>
-                <label>
-                  Field
-                  <select value={offerFieldKey} onChange={(e) => setOfferFieldKey(e.target.value)}>
-                    <option value="">Select…</option>
-                    {fields.map((f) => (
-                      <option key={f.fieldKey} value={f.fieldKey}>
-                        {f.displayName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  GameDate (YYYY-MM-DD)
-                  <input
-                    type="date"
-                    value={offerDate}
-                    onChange={(e) => setOfferDate(e.target.value)}
-                    placeholder="2026-03-29"
-                  />
-                </label>
-                <label>
-                  StartTime (HH:MM)
-                  <input
-                    type="time"
-                    value={offerStart}
-                    onChange={(e) => setOfferStart(e.target.value)}
-                    placeholder="09:00"
-                  />
-                </label>
-                <label>
-                  EndTime (HH:MM)
-                  <input
-                    type="time"
-                    value={offerEnd}
-                    onChange={(e) => setOfferEnd(e.target.value)}
-                    placeholder="10:15"
-                  />
-                </label>
-                <label>
-                  Notes
-                  <input value={offerNotes} onChange={(e) => setOfferNotes(e.target.value)} />
-                </label>
-              </div>
-              <div className="row">
-                <button className="btn primary" onClick={createSlot} disabled={loading}>
-                  Create Offer
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="grid2">
-                <label>
-                  Type
-                  <select value={newType} onChange={(e) => setNewType(e.target.value)}>
-                    <option value="Practice">Practice</option>
-                    <option value="Meeting">Meeting</option>
-                    <option value="Clinic">Clinic</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </label>
-                <label>
-                  Title
-                  <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
-                </label>
-                <label>
-                  Location
-                  <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} />
-                </label>
-                <label>
-                  EventDate (YYYY-MM-DD)
-                  <input
-                    type="date"
-                    value={newDate}
-                    onChange={(e) => setNewDate(e.target.value)}
-                    placeholder="2026-04-05"
-                  />
-                </label>
-                <label>
-                  StartTime (HH:MM)
-                  <input
-                    type="time"
-                    value={newStart}
-                    onChange={(e) => setNewStart(e.target.value)}
-                    placeholder="18:00"
-                  />
-                </label>
-                <label>
-                  EndTime (HH:MM)
-                  <input
-                    type="time"
-                    value={newEnd}
-                    onChange={(e) => setNewEnd(e.target.value)}
-                    placeholder="19:30"
-                  />
-                </label>
-                <label>
-                  Notes
-                  <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)} />
-                </label>
+            ) : null}
+            <label>
+              Title
+              <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
+            </label>
+            <label>
+              Location
+              <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} />
+            </label>
+          <label>
+            EventDate (YYYY-MM-DD)
+            <input
+              type="date"
+              value={newDate}
+              onChange={(e) => setNewDate(e.target.value)}
+              placeholder="2026-04-05"
+            />
+          </label>
+          <label>
+            StartTime (HH:MM)
+            <input
+              type="time"
+              value={newStart}
+              onChange={(e) => setNewStart(e.target.value)}
+              placeholder="18:00"
+            />
+          </label>
+          <label>
+            EndTime (HH:MM)
+            <input
+              type="time"
+              value={newEnd}
+              onChange={(e) => setNewEnd(e.target.value)}
+              placeholder="19:30"
+            />
+          </label>
+            <label>
+              Notes
+              <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)} />
+            </label>
+            {role === "LeagueAdmin" ? (
+              <>
                 <label>
                   Division (optional)
                   <input value={newDivision} onChange={(e) => setNewDivision(e.target.value)} placeholder="10U" />
@@ -592,14 +513,14 @@ export default function CalendarPage({ me, leagueId }) {
                   Team ID (optional)
                   <input value={newTeamId} onChange={(e) => setNewTeamId(e.target.value)} placeholder="TIGERS" />
                 </label>
-              </div>
-              <div className="row">
-                <button className="btn primary" onClick={createEvent} disabled={loading}>
-                  Create Event
-                </button>
-              </div>
-            </>
-          )}
+              </>
+            ) : null}
+          </div>
+          <div className="row">
+            <button className="btn primary" onClick={createEvent} disabled={loading}>
+              Create Event
+            </button>
+          </div>
         </div>
       ) : null}
 
