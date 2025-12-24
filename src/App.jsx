@@ -89,6 +89,7 @@ export default function App() {
         {effectiveTab === "help" && <HelpPage />}
         {effectiveTab === "global-admin" && isGlobalAdmin && <GlobalAdminPage />}
         {effectiveTab === "admin" && <AdminPage me={me} />}
+        {effectiveTab === "api-tests" && <ApiTestsPage leagueId={activeLeagueId} />}
       </main>
     </div>
   );
