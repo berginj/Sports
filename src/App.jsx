@@ -5,7 +5,7 @@ import ManagePage from "./pages/ManagePage";
 import HelpPage from "./pages/HelpPage";
 import AccessPage from "./pages/AccessPage";
 import AdminPage from "./pages/AdminPage";
-import ApiTestsPage from "./pages/ApiTestsPage";
+import GlobalAdminPage from "./pages/GlobalAdminPage";
 import TopNav from "./components/TopNav";
 import { useSession } from "./lib/useSession";
 
@@ -17,9 +17,9 @@ export default function App() {
   const isGlobalAdmin = !!me?.isGlobalAdmin;
   const hasMemberships = (memberships?.length || 0) > 0;
 
-  // When global admins have no memberships, default them into the admin view.
+  // When global admins have no memberships, default them into the global admin view.
   const effectiveTab = useMemo(() => {
-    if (!hasMemberships && isGlobalAdmin) return "admin";
+    if (!hasMemberships && isGlobalAdmin) return "global-admin";
     return tab;
   }, [tab, hasMemberships, isGlobalAdmin]);
 
@@ -87,6 +87,7 @@ export default function App() {
         {effectiveTab === "calendar" && <CalendarPage me={me} leagueId={activeLeagueId} />}
         {effectiveTab === "manage" && <ManagePage me={me} leagueId={activeLeagueId} />}
         {effectiveTab === "help" && <HelpPage />}
+        {effectiveTab === "global-admin" && isGlobalAdmin && <GlobalAdminPage />}
         {effectiveTab === "admin" && <AdminPage me={me} />}
         {effectiveTab === "api-tests" && <ApiTestsPage leagueId={activeLeagueId} />}
       </main>
