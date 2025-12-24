@@ -6,6 +6,7 @@ import HelpPage from "./pages/HelpPage";
 import AccessPage from "./pages/AccessPage";
 import AdminPage from "./pages/AdminPage";
 import GlobalAdminPage from "./pages/GlobalAdminPage";
+import ApiTestsPage from "./pages/ApiTestsPage";
 import TopNav from "./components/TopNav";
 import { useSession } from "./lib/useSession";
 
