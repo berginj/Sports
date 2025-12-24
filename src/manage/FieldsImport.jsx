@@ -17,9 +17,6 @@ export default function FieldsImport({ leagueId }) {
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
-  // Keep paste-text option as fallback
-  const [csvText, setCsvText] = useState(SAMPLE_CSV);
-
   // File upload state
   const [file, setFile] = useState(null);
 
@@ -54,44 +51,10 @@ export default function FieldsImport({ leagueId }) {
 
     setBusy(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-
-      // IMPORTANT: do NOT set Content-Type manually for multipart; browser will set boundary.
       const res = await apiFetch("/api/import/fields", {
         method: "POST",
-        body: fd,
-      });
-
-      const msg = `Imported. Upserted: ${res?.upserted ?? 0}, Rejected: ${res?.rejected ?? 0}, Skipped: ${res?.skipped ?? 0}`;
-      setOk(msg);
-
-      if (Array.isArray(res?.errors) && res.errors.length) {
-        setRowErrors(res.errors);
-      }
-
-      await load();
-    } catch (e) {
-      setErr(e?.message || "Import failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function importCsvText() {
-    setErr("");
-    setOk("");
-    setRowErrors([]);
-
-    if (!leagueId) return setErr("Select a league first.");
-    if (!csvText.trim()) return setErr("Paste CSV content first.");
-
-    setBusy(true);
-    try {
-      const res = await apiFetch("/api/import/fields", {
-        method: "POST",
-        headers: { "Content-Type": "text/csv" },
-        body: csvText,
+        headers: { "Content-Type": file?.type || "text/csv" },
+        body: file,
       });
 
       const msg = `Imported. Upserted: ${res?.upserted ?? 0}, Rejected: ${res?.rejected ?? 0}, Skipped: ${res?.skipped ?? 0}`;
@@ -121,6 +84,16 @@ export default function FieldsImport({ leagueId }) {
           <code>displayName</code>, <code>address</code>, <code>notes</code>, <code>status</code> ({FIELD_STATUS.ACTIVE}/
           {FIELD_STATUS.INACTIVE}).
         </div>
+        <div className="subtle" style={{ marginBottom: 10 }}>
+          Need a template?{" "}
+          <a
+            href={`data:text/csv;charset=utf-8,${encodeURIComponent(SAMPLE_CSV)}`}
+            download="fields-sample.csv"
+          >
+            Download sample CSV
+          </a>
+          .
+        </div>
 
         <div className="row" style={{ alignItems: "end", gap: 12 }}>
           <label style={{ flex: 1 }}>
@@ -137,27 +110,6 @@ export default function FieldsImport({ leagueId }) {
             {busy ? "Importing…" : "Upload & Import"}
           </button>
         </div>
-
-        <details style={{ marginTop: 12 }}>
-          <summary style={{ cursor: "pointer" }}>Or paste CSV (fallback)</summary>
-          <textarea
-            value={csvText}
-            onChange={(e) => setCsvText(e.target.value)}
-            rows={10}
-            style={{
-              width: "100%",
-              marginTop: 10,
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-            }}
-            disabled={!leagueId || busy}
-          />
-          <div className="row" style={{ marginTop: 10 }}>
-            <button className="btn btn--ghost" onClick={importCsvText} disabled={!canImport}>
-              {busy ? "Importing…" : "Import Pasted CSV"}
-            </button>
-          </div>
-        </details>
 
         {rowErrors.length ? (
           <div style={{ marginTop: 12 }}>
