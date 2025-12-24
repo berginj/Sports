@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiFetch } from "../lib/api";
+import { apiBase, apiFetch } from "../lib/api";
 
 function toDateInputValue(d) {
   const yyyy = d.getFullYear();
@@ -10,6 +10,25 @@ function toDateInputValue(d) {
 
 function normalizeRole(role) {
   return (role || "").trim();
+}
+
+function toWebcalUrl(url) {
+  if (!url) return "";
+  return url.replace(/^https?:/i, "webcal:");
+}
+
+function buildSubscribeUrl(leagueId) {
+  const template = import.meta.env.VITE_CALENDAR_SUBSCRIBE_URL;
+  if (template) {
+    return template.replace("{leagueId}", encodeURIComponent(leagueId || ""));
+  }
+
+  if (typeof window === "undefined") return "";
+  const base = apiBase();
+  const origin = base || window.location.origin;
+  const url = new URL("/api/calendar/ics", origin);
+  if (leagueId) url.searchParams.set("leagueId", leagueId);
+  return url.toString();
 }
 
 export default function CalendarPage({ me, leagueId }) {
@@ -41,6 +60,21 @@ export default function CalendarPage({ me, leagueId }) {
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const subscribeUrl = useMemo(() => buildSubscribeUrl(leagueId), [leagueId]);
+  const webcalUrl = useMemo(() => toWebcalUrl(subscribeUrl), [subscribeUrl]);
+
+  async function copySubscribeUrl() {
+    if (!subscribeUrl) return;
+    try {
+      await navigator.clipboard.writeText(subscribeUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   async function loadMeta() {
     const divs = await apiFetch("/api/divisions");
@@ -298,6 +332,32 @@ export default function CalendarPage({ me, leagueId }) {
         </div>
         <div className="muted" style={{ marginTop: 8 }}>
           Showing slots + events for <b>{leagueId || "(no league)"}</b>.
+        </div>
+        <div className="stack" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 600 }}>Subscribe to this calendar</div>
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            <input
+              readOnly
+              value={subscribeUrl || "Select a league to enable subscriptions."}
+              style={{ minWidth: 280, flex: "1 1 320px" }}
+            />
+            <button className="btn" onClick={copySubscribeUrl} disabled={!subscribeUrl}>
+              {copied ? "Copied" : "Copy URL"}
+            </button>
+            <a
+              className="btn"
+              href={webcalUrl || "#"}
+              aria-disabled={!webcalUrl}
+              onClick={(event) => {
+                if (!webcalUrl) event.preventDefault();
+              }}
+            >
+              Subscribe
+            </a>
+          </div>
+          <div className="muted">
+            Use the Subscribe button to open your calendar app, or copy the URL for manual setup.
+          </div>
         </div>
       </div>
 
