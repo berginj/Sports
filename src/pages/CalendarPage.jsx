@@ -157,6 +157,7 @@ export default function CalendarPage({ me, leagueId }) {
     if (!newDate.trim()) return setErr("EventDate is required (YYYY-MM-DD).");
     if (!newStart.trim()) return setErr("StartTime is required (HH:MM).");
     if (!newEnd.trim()) return setErr("EndTime is required (HH:MM).");
+    if (newStart.trim() >= newEnd.trim()) return setErr("EndTime must be after StartTime.");
 
     try {
       await apiFetch(`/api/events`, {
@@ -271,17 +272,27 @@ export default function CalendarPage({ me, leagueId }) {
           </label>
           <label>
             From
-            <input value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} placeholder="YYYY-MM-DD" />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              placeholder="YYYY-MM-DD"
+            />
           </label>
           <label>
             To
-            <input value={dateTo} onChange={(e) => setDateTo(e.target.value)} placeholder="YYYY-MM-DD" />
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              placeholder="YYYY-MM-DD"
+            />
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18 }}>
             <input type="checkbox" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
             Show cancelled
           </label>
-          <button className="btn" onClick={loadData}>
+          <button className="btn" onClick={loadData} disabled={loading}>
             Refresh
           </button>
         </div>
@@ -313,18 +324,33 @@ export default function CalendarPage({ me, leagueId }) {
               Location
               <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} />
             </label>
-            <label>
-              EventDate (YYYY-MM-DD)
-              <input value={newDate} onChange={(e) => setNewDate(e.target.value)} placeholder="2026-04-05" />
-            </label>
-            <label>
-              StartTime (HH:MM)
-              <input value={newStart} onChange={(e) => setNewStart(e.target.value)} placeholder="18:00" />
-            </label>
-            <label>
-              EndTime (HH:MM)
-              <input value={newEnd} onChange={(e) => setNewEnd(e.target.value)} placeholder="19:30" />
-            </label>
+          <label>
+            EventDate (YYYY-MM-DD)
+            <input
+              type="date"
+              value={newDate}
+              onChange={(e) => setNewDate(e.target.value)}
+              placeholder="2026-04-05"
+            />
+          </label>
+          <label>
+            StartTime (HH:MM)
+            <input
+              type="time"
+              value={newStart}
+              onChange={(e) => setNewStart(e.target.value)}
+              placeholder="18:00"
+            />
+          </label>
+          <label>
+            EndTime (HH:MM)
+            <input
+              type="time"
+              value={newEnd}
+              onChange={(e) => setNewEnd(e.target.value)}
+              placeholder="19:30"
+            />
+          </label>
             <label>
               Notes
               <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)} />
@@ -343,7 +369,9 @@ export default function CalendarPage({ me, leagueId }) {
             ) : null}
           </div>
           <div className="row">
-            <button className="btn primary" onClick={createEvent}>Create Event</button>
+            <button className="btn primary" onClick={createEvent} disabled={loading}>
+              Create Event
+            </button>
           </div>
         </div>
       ) : null}
