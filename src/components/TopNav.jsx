@@ -67,10 +67,18 @@ export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
             </button>
             {isGlobalAdmin ? (
               <button
+                className={tab === "global-admin" ? "tab tab--active" : "tab"}
+                onClick={() => setTab("global-admin")}
+              >
+                Global Admin
+              </button>
+            ) : null}
+            {isGlobalAdmin ? (
+              <button
                 className={tab === "admin" ? "tab tab--active" : "tab"}
                 onClick={() => setTab("admin")}
               >
-                Admin
+                League Admin
               </button>
             ) : null}
             <button
