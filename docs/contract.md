@@ -10,6 +10,9 @@ This document is the single source of truth for UI↔API integration. It must be
 - All calls assume the user is authenticated via Azure Static Web Apps EasyAuth.
 - The API may return 401 when the user is not signed in.
 
+### Base path
+- In Azure Static Web Apps, the API is exposed under `/api`. UI calls should use `/api/<route>` unless a different `VITE_API_BASE_URL` is configured.
+
 ### League scoping (non-negotiable)
 - Every league-scoped endpoint requires header: x-league-id: <leagueId>
 - Backend validates header presence and authorization (membership or global admin where specified).
@@ -70,7 +73,81 @@ Response
 
 ---
 
-## 2) Leagues
+## 1b) Health
+
+### GET /ping
+Health check for the API.
+
+Response
+```json
+{ "data": { "status": "ok" } }
+```
+
+---
+
+## 2) Function call reference (authoritative)
+
+This section is the **artifact for automated reviewers** (including Codex) to understand how every HTTP-triggered
+function is called. Keep it current any time a route, method, or authorization requirement changes. The table below
+is intentionally minimal: it defines how to call each function and where to find the implementation.
+
+**For Codex reviewers:** treat this section as the canonical API call index. Read the table for routes/methods and
+the notes for required headers or roles.
+
+### Maintenance rules
+- Every HttpTrigger must appear in the table below with its HTTP method(s) and route.
+- If an endpoint becomes league-scoped, call out the `x-league-id` requirement in its notes.
+- When refactoring or adding functions, update this table and the matching UI repo copy.
+
+### Endpoint index
+
+| Method | Route | File | Notes |
+| --- | --- | --- | --- |
+| GET | /ping | `Functions/Ping.cs` | Health check. |
+| GET | /me | `Functions/GetMe.cs` | Authenticated identity and memberships. |
+| GET | /leagues | `Functions/LeaguesFunctions.cs` | List leagues for current user. |
+| GET | /league | `Functions/LeaguesFunctions.cs` | Get current league details (requires `x-league-id`). |
+| PATCH | /league | `Functions/LeaguesFunctions.cs` | Update current league (requires `x-league-id`, LeagueAdmin). |
+| GET | /admin/leagues | `Functions/LeaguesFunctions.cs` | Global admin list of leagues. |
+| POST | /admin/leagues | `Functions/LeaguesFunctions.cs` | Global admin create league. |
+| GET | /admin/globaladmins | `Functions/GlobalAdminsFunctions.cs` | Global admin list. |
+| POST | /admin/globaladmins | `Functions/GlobalAdminsFunctions.cs` | Add global admin. |
+| DELETE | /admin/globaladmins/{userId} | `Functions/GlobalAdminsFunctions.cs` | Remove global admin. |
+| POST | /accessrequests | `Functions/AccessRequestsFunctions.cs` | Create access request. |
+| GET | /accessrequests/mine | `Functions/AccessRequestsFunctions.cs` | Current user's access requests. |
+| GET | /accessrequests | `Functions/AccessRequestsFunctions.cs` | League access requests (requires `x-league-id`, LeagueAdmin). |
+| PATCH | /accessrequests/{userId}/approve | `Functions/AccessRequestsFunctions.cs` | Approve access request (requires `x-league-id`, LeagueAdmin). |
+| PATCH | /accessrequests/{userId}/deny | `Functions/AccessRequestsFunctions.cs` | Deny access request (requires `x-league-id`, LeagueAdmin). |
+| POST | /admin/invites | `Functions/LeagueInvitesFunctions.cs` | Create invite (requires `x-league-id`, LeagueAdmin). |
+| POST | /invites/accept | `Functions/LeagueInvitesFunctions.cs` | Accept invite. |
+| GET | /memberships | `Functions/MembershipsFunctions.cs` | List memberships (requires `x-league-id`, LeagueAdmin). |
+| PATCH | /memberships/{userId} | `Functions/MembershipsFunctions.cs` | Update membership (requires `x-league-id`, LeagueAdmin). |
+| GET | /divisions | `Functions/DivisionsFunctions.cs` | List divisions (requires `x-league-id`). |
+| POST | /divisions | `Functions/DivisionsFunctions.cs` | Create division (requires `x-league-id`, LeagueAdmin). |
+| PATCH | /divisions/{code} | `Functions/DivisionsFunctions.cs` | Update division (requires `x-league-id`, LeagueAdmin). |
+| GET | /divisions/templates | `Functions/DivisionsFunctions.cs` | List division templates (requires `x-league-id`). |
+| PATCH | /divisions/templates | `Functions/DivisionsFunctions.cs` | Update division templates (requires `x-league-id`, LeagueAdmin). |
+| GET | /teams | `Functions/TeamsFunctions.cs` | List teams (requires `x-league-id`). |
+| POST | /teams | `Functions/TeamsFunctions.cs` | Create team (requires `x-league-id`, LeagueAdmin). |
+| PATCH | /teams/{division}/{teamId} | `Functions/TeamsFunctions.cs` | Update team (requires `x-league-id`, LeagueAdmin). |
+| DELETE | /teams/{division}/{teamId} | `Functions/TeamsFunctions.cs` | Delete team (requires `x-league-id`, LeagueAdmin). |
+| GET | /fields | `Functions/FieldsFunctions.cs` | List fields (requires `x-league-id`). |
+| POST | /import/fields | `Functions/ImportFields.cs` | CSV field import (requires `x-league-id`, LeagueAdmin). |
+| POST | /import/slots | `Functions/ImportSlots.cs` | CSV slot import (requires `x-league-id`, LeagueAdmin). |
+| GET | /slots | `Functions/GetSlots.cs` | List slots (requires `x-league-id`). |
+| POST | /slots | `Functions/CreateSlot.cs` | Create slot (requires `x-league-id`, LeagueAdmin). |
+| PATCH | /slots/{division}/{slotId}/cancel | `Functions/CancelSlot.cs` | Cancel slot (requires `x-league-id`, LeagueAdmin). |
+| GET | /slots/{division}/{slotId}/requests | `Functions/GetSlotRequests.cs` | List requests for slot (requires `x-league-id`). |
+| POST | /slots/{division}/{slotId}/requests | `Functions/CreateSlotRequest.cs` | Request slot (requires `x-league-id`, Coach). |
+| PATCH | /slots/{division}/{slotId}/requests/{requestId}/approve | `Functions/ApproveSlotRequest.cs` | Approve slot request (requires `x-league-id`, Coach). |
+| GET | /events | `Functions/GetEvents.cs` | List events (requires `x-league-id`). |
+| POST | /events | `Functions/CreateEvent.cs` | Create event (requires `x-league-id`, LeagueAdmin). |
+| PATCH | /events/{eventId} | `Functions/PatchEvent.cs` | Update event (requires `x-league-id`, LeagueAdmin). |
+| DELETE | /events/{eventId} | `Functions/DeleteEvent.cs` | Delete event (requires `x-league-id`, LeagueAdmin). |
+
+---
+
+## 3) Leagues
 
 ### GET /leagues
 Public list of active leagues (used before membership).
@@ -114,7 +191,40 @@ Body
 
 ---
 
-## 3) Access
+## 3b) Global admins (admin)
+
+### Admin: GET /admin/globaladmins
+Requires: global admin.
+
+Response
+```json
+{ "data": [ { "userId": "...", "email": "admin@example.com" } ] }
+```
+
+### Admin: POST /admin/globaladmins
+Requires: global admin.
+
+Body
+```json
+{ "userId": "<string>" }
+```
+
+Response
+```json
+{ "data": { "userId": "...", "email": "admin@example.com" } }
+```
+
+### Admin: DELETE /admin/globaladmins/{userId}
+Requires: global admin.
+
+Response
+```json
+{ "data": { "userId": "...", "removed": true } }
+```
+
+---
+
+## 4) Access
 
 ### POST /accessrequests (league-scoped)
 Header: x-league-id
@@ -168,7 +278,42 @@ Body
 
 ---
 
-## 3b) Memberships (admin)
+## 4b) Invites (admin)
+
+### Admin: POST /admin/invites (league-scoped)
+Header: x-league-id
+Requires: LeagueAdmin or global admin.
+
+Body
+```json
+{
+  "email": "coach@example.com",
+  "role": "Coach",
+  "team": { "division": "10U", "teamId": "TIGERS" }
+}
+```
+
+Response
+```json
+{ "data": { "inviteId": "...", "email": "coach@example.com", "role": "Coach", "status": "Pending" } }
+```
+
+### POST /invites/accept
+Accepts an invite using the invite token.
+
+Body
+```json
+{ "token": "<string>" }
+```
+
+Response
+```json
+{ "data": { "leagueId": "ARL", "status": "Accepted" } }
+```
+
+---
+
+## 4c) Memberships (admin)
 
 ### Admin: GET /memberships (league-scoped)
 Header: x-league-id
@@ -209,7 +354,7 @@ Response
 Notes
 - Some coach actions (e.g., requesting a swap) require a team assignment. When missing, the API returns 400 with error code COACH_TEAM_REQUIRED.
 
-## 4) Divisions
+## 5) Divisions
 
 ### GET /divisions (league-scoped)
 Header: x-league-id
@@ -230,7 +375,7 @@ Sets the league's division template catalog.
 
 ---
 
-## 5) Fields
+## 6) Fields
 
 Fields are league-scoped via `x-league-id` and are referenced by a stable `fieldKey` (provided by admins via CSV import).
 
@@ -283,7 +428,7 @@ Import behavior:
 
 ---
 
-## 6) Teams
+## 7) Teams
 
 Teams are identified by league (header) + division + teamId.
 
@@ -307,7 +452,7 @@ Requires: LeagueAdmin or global admin.
 
 ---
 
-## 7) Slots
+## 8) Slots
 
 Slots are **open game offers/requests** placed on the calendar by a coach (or LeagueAdmin). Another coach can see an open slot and **accept** it (via `POST /slots/{division}/{slotId}/requests`). Acceptance immediately confirms the slot (scheduled on the calendar).
 
@@ -315,6 +460,26 @@ Slot status strings
 - Open
 - Confirmed (accepted + scheduled)
 - Cancelled
+
+### POST /import/slots (league-scoped)
+Requires: LeagueAdmin or global admin.
+
+Body: raw CSV (`Content-Type: text/csv`)
+
+Required columns:
+- `division`
+- `offeringTeamId`
+- `gameDate` (YYYY-MM-DD)
+- `startTime` (HH:MM)
+- `endTime` (HH:MM)
+- `fieldKey`
+
+Optional columns:
+- `notes`
+
+Import behavior:
+- Creates slots for the specified league and division.
+- `fieldKey` must match an imported field.
 
 ### GET /slots (league-scoped)
 Query (all optional): division, status, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)  
@@ -432,7 +597,7 @@ Requires: offering team OR accepting team (confirmedTeamId) OR LeagueAdmin OR gl
 
 ---
 
-## 8) Events
+## 9) Events
 
 Events are calendar items that are **not** Slots (e.g., practices, meetings, clinics, tryouts).
 They are league-scoped via x-league-id.

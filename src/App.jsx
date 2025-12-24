@@ -5,6 +5,7 @@ import ManagePage from "./pages/ManagePage";
 import HelpPage from "./pages/HelpPage";
 import AccessPage from "./pages/AccessPage";
 import AdminPage from "./pages/AdminPage";
+import ApiTestsPage from "./pages/ApiTestsPage";
 import TopNav from "./components/TopNav";
 import { useSession } from "./lib/useSession";
 
@@ -87,6 +88,7 @@ export default function App() {
         {effectiveTab === "manage" && <ManagePage me={me} leagueId={activeLeagueId} />}
         {effectiveTab === "help" && <HelpPage />}
         {effectiveTab === "admin" && <AdminPage me={me} />}
+        {effectiveTab === "api-tests" && <ApiTestsPage leagueId={activeLeagueId} />}
       </main>
     </div>
   );

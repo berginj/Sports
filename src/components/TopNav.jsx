@@ -74,6 +74,12 @@ export default function TopNav({ tab, setTab, me, leagueId, setLeagueId }) {
               </button>
             ) : null}
             <button
+              className={tab === "api-tests" ? "tab tab--active" : "tab"}
+              onClick={() => setTab("api-tests")}
+            >
+              API Tests
+            </button>
+            <button
               className={tab === "help" ? "tab tab--active" : "tab"}
               onClick={() => setTab("help")}
             >
