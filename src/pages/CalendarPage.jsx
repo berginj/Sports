@@ -463,6 +463,7 @@ export default function CalendarPage({ me, leagueId }) {
                 />
                 Create an event
               </label>
+            </div>
             ) : null}
             <label>
               Title
