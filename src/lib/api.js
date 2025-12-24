@@ -1,11 +1,6 @@
 // src/lib/api.js
-
 import { LEAGUE_HEADER_NAME, LEAGUE_STORAGE_KEY } from "./constants";
 
-/**
- * PROD (Azure Static Web Apps): use relative /api so SWA proxies to linked Function App.
- * DEV: allow overriding to call a direct Function App host.
- */
 export function apiBase() {
   if (import.meta.env.DEV) {
     const b = import.meta.env.VITE_API_BASE_URL;
@@ -14,14 +9,13 @@ export function apiBase() {
   return "";
 }
 
-function isFormLikeBody(body) {
-  // Things where the browser must control Content-Type (boundary, etc)
+function isNonJsonBody(body) {
+  // Bodies where the browser MUST control Content-Type (boundary, etc.)
   return (
     (typeof FormData !== "undefined" && body instanceof FormData) ||
-    (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) ||
     (typeof Blob !== "undefined" && body instanceof Blob) ||
     (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) ||
-    (typeof Uint8Array !== "undefined" && body instanceof Uint8Array)
+    (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams)
   );
 }
 
@@ -37,41 +31,36 @@ export async function apiFetch(path, options = {}) {
     headers.set(LEAGUE_HEADER_NAME, leagueId);
   }
 
-  // Only default Content-Type to JSON for non-FormData bodies.
-  // If caller sets Content-Type explicitly (text/csv, etc), we respect it.
-  if (options.body != null && !headers.has("Content-Type")) {
-    if (!isFormLikeBody(options.body)) {
-      headers.set("Content-Type", "application/json");
-    }
+  const body = options.body;
+
+  // Only default to JSON when it's NOT a FormData/blob/etc request.
+  if (body != null && !headers.has("Content-Type") && !isNonJsonBody(body)) {
+    headers.set("Content-Type", "application/json");
   }
 
   const res = await fetch(url, {
     ...options,
     headers,
-    credentials: "include", // REQUIRED for EasyAuth / SWA auth cookies
+    credentials: "include", // EasyAuth/SWA cookies
   });
 
   const text = await res.text();
-  let payload = null;
+  let data = null;
   try {
-    payload = text ? JSON.parse(text) : null;
+    data = text ? JSON.parse(text) : null;
   } catch {
-    payload = text;
+    data = text;
   }
 
-  // Standard envelope
   if (!res.ok) {
-    const err = payload?.error;
-    const message =
+    const err = data?.error;
+    const msg =
       (typeof err === "string" ? err : err?.message) ||
-      (typeof payload === "string" ? payload : "Request failed");
-    const code = typeof err === "object" && err?.code ? err.code : null;
-    const details = typeof err === "object" ? err?.details : null;
-
-    const extra = details ? ` | details: ${JSON.stringify(details)}` : "";
-    throw new Error(`${res.status}${code ? ` ${code}` : ""}: ${message}${extra}`);
+      (typeof data === "string" ? data : "Request failed");
+    const code = typeof err === "object" && err?.code ? `${err.code}: ` : "";
+    throw new Error(`${res.status} ${code}${msg}`);
   }
 
-  if (payload && typeof payload === "object" && "data" in payload) return payload.data;
-  return payload;
+  if (data && typeof data === "object" && "data" in data) return data.data;
+  return data;
 }
