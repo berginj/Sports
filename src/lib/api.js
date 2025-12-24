@@ -20,18 +20,22 @@ function isNonJsonBody(body) {
 }
 
 export async function apiFetch(path, options = {}) {
+  const { omitLeagueHeader = false, ...fetchOptions } = options;
   const base = apiBase();
   const url = base ? `${base}${path}` : path;
+  const shouldOmitLeagueHeader = omitLeagueHeader || path.startsWith("/api/admin");
 
-  const headers = new Headers(options.headers || {});
+  const headers = new Headers(fetchOptions.headers || {});
 
   // Always attach active league id (multi-tenant context)
-  const leagueId = (localStorage.getItem(LEAGUE_STORAGE_KEY) || "").trim();
-  if (leagueId && !headers.has(LEAGUE_HEADER_NAME)) {
-    headers.set(LEAGUE_HEADER_NAME, leagueId);
+  if (!shouldOmitLeagueHeader) {
+    const leagueId = (localStorage.getItem(LEAGUE_STORAGE_KEY) || "").trim();
+    if (leagueId && !headers.has(LEAGUE_HEADER_NAME)) {
+      headers.set(LEAGUE_HEADER_NAME, leagueId);
+    }
   }
 
-  const body = options.body;
+  const body = fetchOptions.body;
 
   // Only default to JSON when it's NOT a FormData/blob/etc request.
   if (body != null && !headers.has("Content-Type") && !isNonJsonBody(body)) {
@@ -39,7 +43,7 @@ export async function apiFetch(path, options = {}) {
   }
 
   const res = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     headers,
     credentials: "include", // EasyAuth/SWA cookies
   });
