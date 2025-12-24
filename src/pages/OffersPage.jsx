@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api";
 
 function fmtDate(d) {
@@ -6,38 +6,21 @@ function fmtDate(d) {
 }
 
 export default function OffersPage({ me }) {
-  const email = me?.email || "";
   const [divisions, setDivisions] = useState([]);
   const [division, setDivision] = useState("");
-  const [fields, setFields] = useState([]);
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-
-  const fieldByKey = useMemo(() => {
-    const m = new Map();
-    for (const f of fields || []) {
-      const k = f?.fieldKey || "";
-      if (k) m.set(k, f);
-    }
-    return m;
-  }, [fields]);
 
   async function loadAll(selectedDivision) {
     setErr("");
     setLoading(true);
     try {
-      const [divs, flds] = await Promise.all([
-        apiFetch("/api/divisions"),
-        apiFetch("/api/fields"),
-      ]);
+      const divs = await apiFetch("/api/divisions");
       const divList = Array.isArray(divs) ? divs : [];
       setDivisions(divList);
       const firstDiv = selectedDivision || divList?.[0]?.code || "";
       setDivision(firstDiv);
-
-      const fieldList = Array.isArray(flds) ? flds : [];
-      setFields(fieldList);
 
       if (firstDiv) {
         const s = await apiFetch(`/api/slots?division=${encodeURIComponent(firstDiv)}`);

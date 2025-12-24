@@ -50,6 +50,7 @@ export default function CalendarPage({ me, leagueId }) {
 
   const [divisions, setDivisions] = useState([]);
   const [division, setDivision] = useState("");
+  const [fields, setFields] = useState([]);
 
   const today = useMemo(() => new Date(), []);
   const [dateFrom, setDateFrom] = useState(toDateInputValue(today));
@@ -77,8 +78,9 @@ export default function CalendarPage({ me, leagueId }) {
   }
 
   async function loadMeta() {
-    const divs = await apiFetch("/api/divisions");
+    const [divs, flds] = await Promise.all([apiFetch("/api/divisions"), apiFetch("/api/fields")]);
     setDivisions(Array.isArray(divs) ? divs : []);
+    setFields(Array.isArray(flds) ? flds : []);
   }
 
   async function loadData() {
@@ -169,11 +171,23 @@ export default function CalendarPage({ me, leagueId }) {
       });
   }, [events, slots]);
 
+  const fieldByKey = useMemo(() => {
+    const m = new Map();
+    for (const f of fields || []) {
+      const k = f?.fieldKey || "";
+      if (k) m.set(k, f);
+    }
+    return m;
+  }, [fields]);
+
   // --- Create events ---
   // Events are non-game calendar items managed by LeagueAdmin.
   // Game requests/offers live under Slots.
   const canCreateEvents = role === "LeagueAdmin";
   const canDeleteAnyEvent = role === "LeagueAdmin";
+  const canCreateSlots = role === "Coach" || role === "LeagueAdmin" || isGlobalAdmin;
+
+  const [createKind, setCreateKind] = useState(canCreateEvents ? "offer" : "offer");
 
   const [newType, setNewType] = useState("Practice");
   const [newDivision, setNewDivision] = useState("");
@@ -184,6 +198,69 @@ export default function CalendarPage({ me, leagueId }) {
   const [newEnd, setNewEnd] = useState("");
   const [newLocation, setNewLocation] = useState("");
   const [newNotes, setNewNotes] = useState("");
+
+  const [offerDivision, setOfferDivision] = useState("");
+  const [offeringTeamId, setOfferingTeamId] = useState("");
+  const [offerDate, setOfferDate] = useState("");
+  const [offerStart, setOfferStart] = useState("");
+  const [offerEnd, setOfferEnd] = useState("");
+  const [offerFieldKey, setOfferFieldKey] = useState("");
+  const [offerNotes, setOfferNotes] = useState("");
+
+  useEffect(() => {
+    if (!canCreateEvents && createKind === "event") {
+      setCreateKind("offer");
+    }
+  }, [canCreateEvents, createKind]);
+
+  useEffect(() => {
+    if (!offerDivision) {
+      if (division) {
+        setOfferDivision(division);
+      } else if (divisions[0]?.code) {
+        setOfferDivision(divisions[0].code);
+      }
+    }
+  }, [division, divisions, offerDivision]);
+
+  async function createSlot() {
+    setErr("");
+    const f = fieldByKey.get(offerFieldKey);
+    if (!offerDivision) return setErr("Select a division first.");
+    if (!offeringTeamId.trim()) return setErr("Offering Team ID is required.");
+    if (!offerDate.trim()) return setErr("GameDate is required.");
+    if (!offerStart.trim() || !offerEnd.trim()) return setErr("StartTime/EndTime are required.");
+    if (offerStart.trim() >= offerEnd.trim()) return setErr("EndTime must be after StartTime.");
+    if (!f) return setErr("Select a field.");
+
+    try {
+      await apiFetch(`/api/slots`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          division: offerDivision,
+          offeringTeamId: offeringTeamId.trim(),
+          gameDate: offerDate.trim(),
+          startTime: offerStart.trim(),
+          endTime: offerEnd.trim(),
+          parkName: f.parkName,
+          fieldName: f.fieldName,
+          displayName: f.displayName,
+          fieldKey: f.fieldKey,
+          notes: offerNotes.trim(),
+        }),
+      });
+      setOfferingTeamId("");
+      setOfferDate("");
+      setOfferStart("");
+      setOfferEnd("");
+      setOfferFieldKey("");
+      setOfferNotes("");
+      await loadData();
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
+  }
 
   async function createEvent() {
     setErr("");
@@ -361,19 +438,30 @@ export default function CalendarPage({ me, leagueId }) {
         </div>
       </div>
 
-      {canCreateEvents ? (
+      {canCreateSlots || canCreateEvents ? (
         <div className="card">
-          <div className="cardTitle">{role === "Coach" ? "Request a game" : "Add an event"}</div>
-          <div className="grid2">
-            {role === "LeagueAdmin" ? (
-              <label>
-                Type
-                <select value={newType} onChange={(e) => setNewType(e.target.value)}>
-                  <option value="Practice">Practice</option>
-                  <option value="Meeting">Meeting</option>
-                  <option value="Clinic">Clinic</option>
-                  <option value="Other">Other</option>
-                </select>
+          <div className="cardTitle">Create</div>
+          {canCreateEvents ? (
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="radio"
+                  name="createKind"
+                  value="offer"
+                  checked={createKind === "offer"}
+                  onChange={() => setCreateKind("offer")}
+                />
+                Offer a game slot
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="radio"
+                  name="createKind"
+                  value="event"
+                  checked={createKind === "event"}
+                  onChange={() => setCreateKind("event")}
+                />
+                Create an event
               </label>
             ) : null}
             <label>
