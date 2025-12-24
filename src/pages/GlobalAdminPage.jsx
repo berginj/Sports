@@ -1,8 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
-import { LEAGUE_HEADER_NAME } from "../lib/constants";
+import { FIELD_STATUS, LEAGUE_HEADER_NAME } from "../lib/constants";
 
 const ROLE_OPTIONS = ["LeagueAdmin", "Coach", "Viewer"];
+const TABLE_SUGGESTIONS = [
+  "GameSwapLeagues",
+  "GameSwapMemberships",
+  "GameSwapDivisions",
+  "GameSwapTeams",
+  "GameSwapFields",
+  "GameSwapSlots",
+  "GameSwapEvents",
+  "GameSwapAccessRequests",
+  "GameSwapInvites",
+];
+const SAMPLE_FIELDS_CSV = `fieldKey,parkName,fieldName,displayName,address,notes,status
+gunston/turf,Gunston Park,Turf,Gunston Park > Turf,,,${FIELD_STATUS.ACTIVE}
+tuckahoe/field-2,Tuckahoe Park,Field 2,Tuckahoe Park > Field 2,,,${FIELD_STATUS.ACTIVE}
+`;
 
 function leagueHeader(leagueId) {
   return { [LEAGUE_HEADER_NAME]: leagueId };
@@ -16,6 +31,47 @@ export default function GlobalAdminPage() {
   const [err, setErr] = useState("");
   const [leagueData, setLeagueData] = useState({});
   const [coachDraft, setCoachDraft] = useState({});
+  const [globalAdmins, setGlobalAdmins] = useState([]);
+  const [loadingGlobalAdmins, setLoadingGlobalAdmins] = useState(false);
+  const [globalAdminErr, setGlobalAdminErr] = useState("");
+  const [newGlobalAdminId, setNewGlobalAdminId] = useState("");
+
+  const [leagueDraft, setLeagueDraft] = useState({
+    leagueId: "",
+    name: "",
+    timezone: "America/New_York",
+    status: "Active",
+  });
+  const [leagueCreateBusy, setLeagueCreateBusy] = useState(false);
+  const [leagueCreateErr, setLeagueCreateErr] = useState("");
+  const [leagueCreateOk, setLeagueCreateOk] = useState("");
+
+  const [tableName, setTableName] = useState("");
+  const [tableBusy, setTableBusy] = useState(false);
+  const [tableErr, setTableErr] = useState("");
+  const [tableOk, setTableOk] = useState("");
+
+  const [divisionDraft, setDivisionDraft] = useState({ name: "", code: "" });
+  const [divisionBusy, setDivisionBusy] = useState(false);
+  const [divisionErr, setDivisionErr] = useState("");
+  const [divisionOk, setDivisionOk] = useState("");
+
+  const [teamDraft, setTeamDraft] = useState({
+    division: "",
+    teamId: "",
+    name: "",
+    contactName: "",
+    contactEmail: "",
+    contactPhone: "",
+  });
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamErr, setTeamErr] = useState("");
+  const [teamOk, setTeamOk] = useState("");
+
+  const [fieldsCsv, setFieldsCsv] = useState(SAMPLE_FIELDS_CSV);
+  const [fieldsBusy, setFieldsBusy] = useState(false);
+  const [fieldsErr, setFieldsErr] = useState("");
+  const [fieldsOk, setFieldsOk] = useState("");
 
   async function loadLeagues() {
     setLoadingLeagues(true);
@@ -79,8 +135,191 @@ export default function GlobalAdminPage() {
     }
   }
 
+  async function loadGlobalAdmins() {
+    setLoadingGlobalAdmins(true);
+    setGlobalAdminErr("");
+    try {
+      const data = await apiFetch("/api/admin/globaladmins");
+      setGlobalAdmins(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setGlobalAdminErr(e?.message || "Failed to load global admins");
+      setGlobalAdmins([]);
+    } finally {
+      setLoadingGlobalAdmins(false);
+    }
+  }
+
+  async function addGlobalAdmin() {
+    const userId = newGlobalAdminId.trim();
+    setGlobalAdminErr("");
+    if (!userId) return setGlobalAdminErr("User ID is required.");
+    try {
+      await apiFetch("/api/admin/globaladmins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      setNewGlobalAdminId("");
+      await loadGlobalAdmins();
+    } catch (e) {
+      setGlobalAdminErr(e?.message || "Failed to add global admin");
+    }
+  }
+
+  async function removeGlobalAdmin(userId) {
+    if (!userId) return;
+    setGlobalAdminErr("");
+    try {
+      await apiFetch(`/api/admin/globaladmins/${encodeURIComponent(userId)}`, {
+        method: "DELETE",
+      });
+      await loadGlobalAdmins();
+    } catch (e) {
+      setGlobalAdminErr(e?.message || "Failed to remove global admin");
+    }
+  }
+
+  async function createLeague() {
+    setLeagueCreateErr("");
+    setLeagueCreateOk("");
+    const leagueId = leagueDraft.leagueId.trim();
+    const name = leagueDraft.name.trim();
+    const timezone = leagueDraft.timezone.trim();
+    const status = leagueDraft.status.trim();
+    if (!leagueId) return setLeagueCreateErr("League ID is required.");
+    if (!name) return setLeagueCreateErr("League name is required.");
+    if (!timezone) return setLeagueCreateErr("Timezone is required.");
+
+    setLeagueCreateBusy(true);
+    try {
+      await apiFetch("/api/admin/leagues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leagueId, name, timezone, status }),
+      });
+      setLeagueCreateOk("League created.");
+      setLeagueDraft({ leagueId: "", name: "", timezone, status: status || "Active" });
+      await loadLeagues();
+    } catch (e) {
+      setLeagueCreateErr(e?.message || "Failed to create league");
+    } finally {
+      setLeagueCreateBusy(false);
+    }
+  }
+
+  async function ensureTable() {
+    const name = tableName.trim();
+    setTableErr("");
+    setTableOk("");
+    if (!name) return setTableErr("Table name is required.");
+    setTableBusy(true);
+    try {
+      await apiFetch("/api/admin/tables", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tableName: name }),
+      });
+      setTableOk(`Table ensured: ${name}`);
+    } catch (e) {
+      setTableErr(e?.message || "Failed to ensure table");
+    } finally {
+      setTableBusy(false);
+    }
+  }
+
+  async function createDivision() {
+    const leagueId = selectedLeagueId;
+    const name = divisionDraft.name.trim();
+    const code = divisionDraft.code.trim();
+    setDivisionErr("");
+    setDivisionOk("");
+    if (!leagueId || leagueId === "all") return setDivisionErr("Select a single league first.");
+    if (!name) return setDivisionErr("Division name is required.");
+    setDivisionBusy(true);
+    try {
+      await apiFetch("/api/divisions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...leagueHeader(leagueId) },
+        body: JSON.stringify({ name, code: code || undefined, isActive: true }),
+      });
+      setDivisionOk("Division created.");
+      setDivisionDraft({ name: "", code: "" });
+      await loadLeagueBundle(leagueId);
+    } catch (e) {
+      setDivisionErr(e?.message || "Failed to create division");
+    } finally {
+      setDivisionBusy(false);
+    }
+  }
+
+  async function createTeam() {
+    const leagueId = selectedLeagueId;
+    const division = teamDraft.division.trim();
+    const teamId = teamDraft.teamId.trim();
+    const name = teamDraft.name.trim();
+    setTeamErr("");
+    setTeamOk("");
+    if (!leagueId || leagueId === "all") return setTeamErr("Select a single league first.");
+    if (!division) return setTeamErr("Division is required.");
+    if (!teamId) return setTeamErr("Team ID is required.");
+    setTeamBusy(true);
+    try {
+      await apiFetch("/api/teams", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...leagueHeader(leagueId) },
+        body: JSON.stringify({
+          division,
+          teamId,
+          name: name || teamId,
+          primaryContact: {
+            name: teamDraft.contactName.trim(),
+            email: teamDraft.contactEmail.trim(),
+            phone: teamDraft.contactPhone.trim(),
+          },
+        }),
+      });
+      setTeamOk("Team created.");
+      setTeamDraft({
+        division,
+        teamId: "",
+        name: "",
+        contactName: "",
+        contactEmail: "",
+        contactPhone: "",
+      });
+      await loadLeagueBundle(leagueId);
+    } catch (e) {
+      setTeamErr(e?.message || "Failed to create team");
+    } finally {
+      setTeamBusy(false);
+    }
+  }
+
+  async function importFieldsCsv() {
+    const leagueId = selectedLeagueId;
+    setFieldsErr("");
+    setFieldsOk("");
+    if (!leagueId || leagueId === "all") return setFieldsErr("Select a single league first.");
+    if (!fieldsCsv.trim()) return setFieldsErr("CSV body is required.");
+    setFieldsBusy(true);
+    try {
+      await apiFetch("/api/import/fields", {
+        method: "POST",
+        headers: { "Content-Type": "text/csv", ...leagueHeader(leagueId) },
+        body: fieldsCsv,
+      });
+      setFieldsOk("Fields import submitted.");
+      await loadLeagueBundle(leagueId);
+    } catch (e) {
+      setFieldsErr(e?.message || "Failed to import fields");
+    } finally {
+      setFieldsBusy(false);
+    }
+  }
+
   useEffect(() => {
     loadLeagues();
+    loadGlobalAdmins();
   }, []);
 
   useEffect(() => {
@@ -224,6 +463,108 @@ export default function GlobalAdminPage() {
         Review all leagues, membership assignments, and pending access requests.
       </p>
 
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Create league</h3>
+        <p className="muted">Create a new league and then bootstrap its data tables.</p>
+        {leagueCreateErr ? <div className="error">{leagueCreateErr}</div> : null}
+        {leagueCreateOk ? <div className="callout callout--ok">{leagueCreateOk}</div> : null}
+        <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+          <label style={{ flex: 1, minWidth: 160 }}>
+            League ID
+            <input
+              value={leagueDraft.leagueId}
+              onChange={(e) => setLeagueDraft((prev) => ({ ...prev, leagueId: e.target.value }))}
+              placeholder="ARL"
+            />
+          </label>
+          <label style={{ flex: 2, minWidth: 220 }}>
+            Name
+            <input
+              value={leagueDraft.name}
+              onChange={(e) => setLeagueDraft((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Arlington"
+            />
+          </label>
+          <label style={{ flex: 2, minWidth: 220 }}>
+            Timezone
+            <input
+              value={leagueDraft.timezone}
+              onChange={(e) => setLeagueDraft((prev) => ({ ...prev, timezone: e.target.value }))}
+              placeholder="America/New_York"
+            />
+          </label>
+          <label style={{ flex: 1, minWidth: 140 }}>
+            Status
+            <select
+              value={leagueDraft.status}
+              onChange={(e) => setLeagueDraft((prev) => ({ ...prev, status: e.target.value }))}
+            >
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </label>
+        </div>
+        <div className="row" style={{ marginTop: 12 }}>
+          <button className="btn btnPrimary" onClick={createLeague} disabled={leagueCreateBusy}>
+            {leagueCreateBusy ? "Creating…" : "Create league"}
+          </button>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Manage global admins</h3>
+        <p className="muted">Add or remove global admin user IDs.</p>
+        {globalAdminErr ? <div className="error">{globalAdminErr}</div> : null}
+        <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "end" }}>
+          <label style={{ flex: 1, minWidth: 220 }}>
+            User ID
+            <input
+              value={newGlobalAdminId}
+              onChange={(e) => setNewGlobalAdminId(e.target.value)}
+              placeholder="USER_ID"
+            />
+          </label>
+          <button className="btn btnPrimary" onClick={addGlobalAdmin} disabled={loadingGlobalAdmins}>
+            Add global admin
+          </button>
+          <button className="btn btn--ghost" onClick={loadGlobalAdmins} disabled={loadingGlobalAdmins}>
+            Refresh list
+          </button>
+        </div>
+        <div className="tableWrap" style={{ marginTop: 12 }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Email</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {globalAdmins.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="muted">
+                    {loadingGlobalAdmins ? "Loading…" : "No global admins found."}
+                  </td>
+                </tr>
+              ) : (
+                globalAdmins.map((a) => (
+                  <tr key={a.userId}>
+                    <td>{a.userId}</td>
+                    <td>{a.email || ""}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <button className="btn btn--ghost" onClick={() => removeGlobalAdmin(a.userId)}>
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "end" }}>
         <label>
           League filter
@@ -247,6 +588,158 @@ export default function GlobalAdminPage() {
       </div>
 
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Bootstrap league data</h3>
+        <p className="muted">
+          Create initial divisions, teams, and fields for the selected league. Select a specific league above.
+        </p>
+
+        <div className="card" style={{ marginTop: 12 }}>
+          <h4 style={{ marginTop: 0 }}>Ensure storage tables</h4>
+          <p className="muted">If a storage table is missing, ensure it exists before importing data.</p>
+          {tableErr ? <div className="error">{tableErr}</div> : null}
+          {tableOk ? <div className="callout callout--ok">{tableOk}</div> : null}
+          <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "end" }}>
+            <label style={{ flex: 1, minWidth: 220 }}>
+              Table name
+              <input
+                value={tableName}
+                onChange={(e) => setTableName(e.target.value)}
+                placeholder="GameSwapDivisions"
+              />
+            </label>
+            <button className="btn btnPrimary" onClick={ensureTable} disabled={tableBusy}>
+              {tableBusy ? "Ensuring…" : "Ensure table"}
+            </button>
+          </div>
+          <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
+            {TABLE_SUGGESTIONS.map((name) => (
+              <button
+                key={name}
+                className="btn btn--ghost"
+                type="button"
+                onClick={() => setTableName(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 12 }}>
+          <h4 style={{ marginTop: 0 }}>Create division</h4>
+          {divisionErr ? <div className="error">{divisionErr}</div> : null}
+          {divisionOk ? <div className="callout callout--ok">{divisionOk}</div> : null}
+          <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <label style={{ flex: 2, minWidth: 200 }}>
+              Division name
+              <input
+                value={divisionDraft.name}
+                onChange={(e) => setDivisionDraft((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="Ponytail (4th Grade)"
+              />
+            </label>
+            <label style={{ flex: 1, minWidth: 140 }}>
+              Code (optional)
+              <input
+                value={divisionDraft.code}
+                onChange={(e) => setDivisionDraft((prev) => ({ ...prev, code: e.target.value }))}
+                placeholder="pony4"
+              />
+            </label>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn btnPrimary" onClick={createDivision} disabled={divisionBusy}>
+              {divisionBusy ? "Creating…" : "Create division"}
+            </button>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 12 }}>
+          <h4 style={{ marginTop: 0 }}>Create team</h4>
+          {teamErr ? <div className="error">{teamErr}</div> : null}
+          {teamOk ? <div className="callout callout--ok">{teamOk}</div> : null}
+          <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <label style={{ flex: 1, minWidth: 140 }}>
+              Division
+              <input
+                value={teamDraft.division}
+                onChange={(e) => setTeamDraft((prev) => ({ ...prev, division: e.target.value }))}
+                placeholder="10U"
+              />
+            </label>
+            <label style={{ flex: 1, minWidth: 140 }}>
+              Team ID
+              <input
+                value={teamDraft.teamId}
+                onChange={(e) => setTeamDraft((prev) => ({ ...prev, teamId: e.target.value }))}
+                placeholder="TIGERS"
+              />
+            </label>
+            <label style={{ flex: 2, minWidth: 200 }}>
+              Team name
+              <input
+                value={teamDraft.name}
+                onChange={(e) => setTeamDraft((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="Tigers"
+              />
+            </label>
+          </div>
+          <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <label style={{ flex: 1, minWidth: 200 }}>
+              Contact name
+              <input
+                value={teamDraft.contactName}
+                onChange={(e) => setTeamDraft((prev) => ({ ...prev, contactName: e.target.value }))}
+                placeholder="Pat Coach"
+              />
+            </label>
+            <label style={{ flex: 1, minWidth: 200 }}>
+              Contact email
+              <input
+                value={teamDraft.contactEmail}
+                onChange={(e) => setTeamDraft((prev) => ({ ...prev, contactEmail: e.target.value }))}
+                placeholder="coach@example.com"
+              />
+            </label>
+            <label style={{ flex: 1, minWidth: 200 }}>
+              Contact phone
+              <input
+                value={teamDraft.contactPhone}
+                onChange={(e) => setTeamDraft((prev) => ({ ...prev, contactPhone: e.target.value }))}
+                placeholder="555-1212"
+              />
+            </label>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn btnPrimary" onClick={createTeam} disabled={teamBusy}>
+              {teamBusy ? "Creating…" : "Create team"}
+            </button>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 12 }}>
+          <h4 style={{ marginTop: 0 }}>Import fields CSV</h4>
+          <p className="muted">Seed the fields table with a quick CSV paste.</p>
+          {fieldsErr ? <div className="error">{fieldsErr}</div> : null}
+          {fieldsOk ? <div className="callout callout--ok">{fieldsOk}</div> : null}
+          <label style={{ display: "block" }}>
+            CSV body
+            <textarea
+              rows={6}
+              value={fieldsCsv}
+              onChange={(e) => setFieldsCsv(e.target.value)}
+              style={{ width: "100%", fontFamily: "monospace" }}
+            />
+          </label>
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn btnPrimary" onClick={importFieldsCsv} disabled={fieldsBusy}>
+              {fieldsBusy ? "Importing…" : "Import fields"}
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <h3 style={{ marginTop: 0 }}>Memberships ({memberships.length})</h3>
