@@ -51,10 +51,11 @@ export default function FieldsImport({ leagueId }) {
 
     setBusy(true);
     try {
+      const csvText = await file.text();
       const res = await apiFetch("/api/import/fields", {
         method: "POST",
-        headers: { "Content-Type": file?.type || "text/csv" },
-        body: file,
+        headers: { "Content-Type": "text/csv" },
+        body: csvText,
       });
 
       const msg = `Imported. Upserted: ${res?.upserted ?? 0}, Rejected: ${res?.rejected ?? 0}, Skipped: ${res?.skipped ?? 0}`;
