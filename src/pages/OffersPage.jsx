@@ -85,6 +85,7 @@ export default function OffersPage({ me }) {
     if (!offeringTeamId.trim()) return setErr("Offering Team ID is required.");
     if (!gameDate.trim()) return setErr("GameDate is required.");
     if (!startTime.trim() || !endTime.trim()) return setErr("StartTime/EndTime are required.");
+    if (startTime.trim() >= endTime.trim()) return setErr("EndTime must be after StartTime.");
     if (!f) return setErr("Select a field.");
 
     const body = {
@@ -151,7 +152,7 @@ export default function OffersPage({ me }) {
               </option>
             ))}
           </select>
-          <button className="btn" onClick={() => loadAll(division)}>
+          <button className="btn" onClick={() => loadAll(division)} disabled={loading}>
             Refresh
           </button>
         </div>
@@ -177,15 +178,30 @@ export default function OffersPage({ me }) {
           </label>
           <label>
             GameDate (YYYY-MM-DD)
-            <input value={gameDate} onChange={(e) => setGameDate(e.target.value)} placeholder="2026-03-29" />
+            <input
+              type="date"
+              value={gameDate}
+              onChange={(e) => setGameDate(e.target.value)}
+              placeholder="2026-03-29"
+            />
           </label>
           <label>
             StartTime (HH:MM)
-            <input value={startTime} onChange={(e) => setStartTime(e.target.value)} placeholder="09:00" />
+            <input
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              placeholder="09:00"
+            />
           </label>
           <label>
             EndTime (HH:MM)
-            <input value={endTime} onChange={(e) => setEndTime(e.target.value)} placeholder="10:15" />
+            <input
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              placeholder="10:15"
+            />
           </label>
           <label>
             Notes
@@ -193,7 +209,7 @@ export default function OffersPage({ me }) {
           </label>
         </div>
         <div className="row">
-          <button className="btn primary" onClick={createSlot}>
+          <button className="btn primary" onClick={createSlot} disabled={loading}>
             Create Slot
           </button>
         </div>
