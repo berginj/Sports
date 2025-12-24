@@ -77,7 +77,7 @@ export default function GlobalAdminPage() {
     setLoadingLeagues(true);
     setErr("");
     try {
-      const data = await apiFetch("/api/admin/leagues");
+      const data = await apiFetch("/api/admin/leagues", { omitLeagueHeader: true });
       const list = Array.isArray(data) ? data : [];
       setLeagues(list);
       return list;
@@ -139,7 +139,7 @@ export default function GlobalAdminPage() {
     setLoadingGlobalAdmins(true);
     setGlobalAdminErr("");
     try {
-      const data = await apiFetch("/api/admin/globaladmins");
+      const data = await apiFetch("/api/admin/globaladmins", { omitLeagueHeader: true });
       setGlobalAdmins(Array.isArray(data) ? data : []);
     } catch (e) {
       setGlobalAdminErr(e?.message || "Failed to load global admins");
@@ -158,6 +158,7 @@ export default function GlobalAdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
+        omitLeagueHeader: true,
       });
       setNewGlobalAdminId("");
       await loadGlobalAdmins();
@@ -172,6 +173,7 @@ export default function GlobalAdminPage() {
     try {
       await apiFetch(`/api/admin/globaladmins/${encodeURIComponent(userId)}`, {
         method: "DELETE",
+        omitLeagueHeader: true,
       });
       await loadGlobalAdmins();
     } catch (e) {
@@ -196,6 +198,7 @@ export default function GlobalAdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ leagueId, name, timezone, status }),
+        omitLeagueHeader: true,
       });
       setLeagueCreateOk("League created.");
       setLeagueDraft({ leagueId: "", name: "", timezone, status: status || "Active" });
@@ -218,6 +221,7 @@ export default function GlobalAdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tableName: name }),
+        omitLeagueHeader: true,
       });
       setTableOk(`Table ensured: ${name}`);
     } catch (e) {
