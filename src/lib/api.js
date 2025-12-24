@@ -2,11 +2,17 @@
 import { LEAGUE_HEADER_NAME, LEAGUE_STORAGE_KEY } from "./constants";
 
 export function apiBase() {
-  if (import.meta.env.DEV) {
-    const b = import.meta.env.VITE_API_BASE_URL;
-    return b && b.trim() ? b.trim().replace(/\/+$/, "") : "";
+  const b = import.meta.env.VITE_API_BASE_URL;
+  return b && b.trim() ? b.trim().replace(/\/+$/, "") : "";
+}
+
+function buildApiUrl(base, path) {
+  if (!base) return path;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (/\/api$/.test(base) && normalizedPath.startsWith("/api/")) {
+    return `${base}${normalizedPath.slice(4)}`;
   }
-  return "";
+  return `${base}${normalizedPath}`;
 }
 
 function isNonJsonBody(body) {
@@ -22,7 +28,7 @@ function isNonJsonBody(body) {
 export async function apiFetch(path, options = {}) {
   const { omitLeagueHeader = false, ...fetchOptions } = options;
   const base = apiBase();
-  const url = base ? `${base}${path}` : path;
+  const url = buildApiUrl(base, path);
 
   const headers = new Headers(fetchOptions.headers || {});
 
